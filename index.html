@@ -55,12 +55,35 @@
       margin:0 0 4px;
       font-size:26px;
       letter-spacing:.02em;
+      display:flex;
+      align-items:baseline;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .version {
+      font-size:11px;
+      padding:2px 8px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      color:var(--muted);
     }
     .muted { color:var(--muted); font-size:14px; }
     .pill {
-      display:inline-flex;align-items:center;gap:6px;
-      font-size:11px;padding:3px 9px;border-radius:999px;
-      border:1px solid var(--border);color:var(--muted);
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      font-size:11px;
+      padding:3px 9px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      color:var(--muted);
+      text-decoration:none;
+      cursor:pointer;
+    }
+    .pill:hover {
+      border-color:var(--accent);
+      color:var(--accent);
+      background:var(--accent-soft);
     }
     .section {
       margin-top:14px;
@@ -200,6 +223,17 @@
       white-space:pre-wrap;
     }
 
+    details.debug {
+      margin-top:10px;
+      border-radius:12px;
+      border:1px dashed var(--border);
+      padding:8px 10px;
+      background:rgba(15,23,42,0.4);
+      font-size:11px;
+    }
+    @media (prefers-color-scheme: light) {
+      details.debug { background:#f3f4f6; }
+    }
     details.debug summary {
       cursor:pointer;
       font-size:12px;
@@ -217,13 +251,16 @@
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
         <div>
-          <h1>Consultation Meeting Processor</h1>
+          <h1>
+            Consultation Meeting Processor
+            <span class="version">v0.4</span>
+          </h1>
           <div class="muted">
             Pick a consultation event, upload the audio, get a transcript, structured summary,
             suggested kit from your spreadsheet template, and a proposal draft.
           </div>
         </div>
-        <span class="pill">Frazer · AVD Tools</span>
+        <a href="https://frazerboorman.github.io/" class="pill">Frazer · AVD TOOLS</a>
       </div>
 
       <!-- STEP 1 – Calendar event -->
@@ -260,10 +297,11 @@
         <div class="section-title">Step 2 – Upload consultation audio &amp; process</div>
         <div class="grid">
           <div>
-            <label for="audioFile">Consultation audio file</label>
-            <input id="audioFile" type="file" accept="audio/*" />
+            <label for="audioFile">Consultation audio / text file</label>
+            <!-- now also accepts plain text files -->
+            <input id="audioFile" type="file" accept="audio/*,text/plain" />
             <div class="small-note">
-              Export from DJI Mic / Voice Memos first. File never leaves your browser except to OpenAI’s API.
+              Export from DJI Mic / Voice Memos first, or upload a .txt transcript. File never leaves your browser except to OpenAI’s API.
             </div>
           </div>
         </div>
@@ -367,6 +405,12 @@
       </div>
 
     </div>
+
+    <!-- Global debug panel -->
+    <details class="debug">
+      <summary>Debug panel</summary>
+      <pre id="debugLog">(empty)</pre>
+    </details>
   </div>
 
   <script>
@@ -388,6 +432,21 @@
     let lastProposalText = "";
 
     // ==============
+    // DEBUG LOGGER
+    // ==============
+    function logDebug(msg) {
+      try {
+        const el = document.getElementById("debugLog");
+        if (!el) return;
+        const ts = new Date().toISOString().replace("T"," ").slice(0,19);
+        el.textContent += "[" + ts + "] " + msg + "\n";
+        el.scrollTop = el.scrollHeight;
+      } catch (e) {
+        if (console && console.warn) console.warn("debugLog error", e);
+      }
+    }
+
+    // ==============
     // STATUS HELPERS
     // ==============
     function setStatus(msg, isError) {
@@ -395,6 +454,7 @@
       if (!el) return;
       el.textContent = "Status: " + msg;
       el.className = isError ? "danger" : "";
+      logDebug("STATUS: " + msg);
     }
 
     function setAiStatus(msg, isError) {
@@ -402,6 +462,7 @@
       if (!el) return;
       el.textContent = msg || "";
       el.className = isError ? "danger" : "";
+      if (msg) logDebug("AI: " + msg);
     }
 
     function escapeHtml(str) {
@@ -428,7 +489,10 @@
     }
 
     function initAuth() {
-      if (!window.google || !google.accounts || !google.accounts.oauth2) return;
+      if (!window.google || !google.accounts || !google.accounts.oauth2) {
+        logDebug("Google auth library not ready yet.");
+        return;
+      }
       tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
@@ -443,6 +507,7 @@
           }
         }
       });
+      logDebug("Google tokenClient initialised.");
     }
 
     function signInManual() {
@@ -451,6 +516,7 @@
         setStatus("Google auth not ready.", true);
         return;
       }
+      logDebug("Requesting Google access token…");
       tokenClient.requestAccessToken();
     }
 
@@ -478,6 +544,8 @@
       url.searchParams.set("timeMin", start.toISOString());
       url.searchParams.set("timeMax", end.toISOString());
       url.searchParams.set("maxResults","250");
+
+      logDebug("Fetching events: " + url.toString());
 
       const res = await fetch(url.toString(), {
         headers: { "Authorization":"Bearer " + accessToken }
@@ -523,6 +591,7 @@
       });
 
       setStatus("Loaded " + currentEvents.length + " events.", false);
+      logDebug("Loaded " + currentEvents.length + " events.");
     }
 
     // ===================
@@ -538,10 +607,20 @@
 
     async function transcribeAudio(file) {
       const apiKey = getOpenAIKeyOrThrow();
+
+      // If it's a text file, just read it instead of sending to audio endpoint
+      if (file.type === "text/plain" || file.name.toLowerCase().endsWith(".txt")) {
+        logDebug("Treating file as plain text transcript: " + file.name);
+        const text = await file.text();
+        return text || "";
+      }
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("model", AUDIO_MODEL);
       formData.append("response_format","json"); // expect { text: "..." }
+
+      logDebug("Sending audio to OpenAI whisper…");
 
       const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
         method: "POST",
@@ -574,7 +653,7 @@
         "- If something was clearly rejected, do NOT list it as part of the final solution.\n" +
         "- Do NOT invent any kit or decisions that are not in the transcript.\n" +
         "- productNeeds items should be high-level roles like 'ceiling speakers for main hall', '4K projector',\n" +
-        "  'HDMI wall plate', 'Bluetooth input', 'wireless handheld microphone', etc.\n\n" +
+        "  'HDMI wall plate', 'wireless handheld microphone', etc.\n\n" +
         "Return STRICT JSON ONLY in this format:\n" +
         "{\n" +
         '  \"summary\": \"Short paragraph summarising the meeting from the engineer’s perspective.\",\n' +
@@ -591,14 +670,15 @@
         '      \"extraNotes\": \"any constraints mentioned (e.g. white finish, left wall, balcony, etc.)\"\n' +
         '    }\n' +
         '  ]\n' +
-        "}\n\n" +
-        "If you are unsure of a quantity, use 0.\n" +
-        "Do NOT add explanatory text outside the JSON object.";
+        "}\n" +
+        "No explanatory text outside the JSON.";
 
       const payload = {
         transcript,
         eventMeta
       };
+
+      logDebug("Sending transcript to OpenAI for structured summary…");
 
       const res = await fetch("https://api.openai.com/v1/responses", {
         method: "POST",
@@ -639,6 +719,7 @@
         console.error("Failed to parse AI JSON:", rawText);
         throw new Error("Failed to parse AI JSON summary.");
       }
+      logDebug("Structured summary parsed.");
       return parsed;
     }
 
@@ -646,12 +727,13 @@
       const fileInput = document.getElementById("audioFile");
       const file = fileInput.files && fileInput.files[0];
       if (!file) {
-        setAiStatus("Please choose an audio file first.", true);
+        setAiStatus("Please choose an audio or text file first.", true);
         return;
       }
 
       document.getElementById("processBtn").disabled = true;
-      setAiStatus("Uploading audio and transcribing…", false);
+      setAiStatus("Uploading and transcribing / reading…", false);
+      logDebug("Processing file: " + file.name + " (" + file.type + ", " + file.size + " bytes)");
 
       try {
         const eventSel = document.getElementById("eventSelect");
@@ -672,9 +754,9 @@
         lastTranscript = transcript || "";
 
         document.getElementById("transcriptBox").textContent =
-          transcript ? transcript : "Transcription returned empty.";
+          transcript ? transcript : "Transcription / text returned empty.";
 
-        setAiStatus("Transcribed. Summarising and structuring…", false);
+        setAiStatus("Transcribed / loaded. Summarising and structuring…", false);
 
         const structured = await summariseTranscript(transcript, eventMeta);
         lastStructuredSummary = structured;
@@ -790,12 +872,12 @@
           "{\n" +
           '  \"items\": [\n' +
           "    {\n" +
-          '      \"rowIndex\": 0,\n' + // row index from sheet (1-based Excel row number)
+          '      \"rowIndex\": 0,\n' +
           '      \"checklist\": \"Audio | Visual | Control | Streaming | Infrastructure | Other\",\n' +
           '      \"quantity\": 0,\n' +
           '      \"notes\": \"short engineer-facing note\",\n' +
           '      \"reason\": \"why this product was chosen (brief)\",\n' +
-          '      \"productSnapshot\": { /* subset of the row fields you used, for human context */ }\n' +
+          '      \"productSnapshot\": { }\n' +
           "    }\n" +
           "  ]\n" +
           "}\n" +
@@ -1077,6 +1159,7 @@
     // INIT
     // =========
     window.addEventListener("DOMContentLoaded", () => {
+      logDebug("DOM loaded.");
       document.getElementById("signinBtn").addEventListener("click", signInManual);
       document.getElementById("processBtn").addEventListener("click", handleProcessMeeting);
       document.getElementById("generateProductsBtn").addEventListener("click", handleGenerateProducts);
@@ -1097,7 +1180,7 @@
       setStatus("Waiting for sign-in…", false);
       // Prepare Google auth client
       setTimeout(() => {
-        try { initAuth(); } catch(e) {}
+        try { initAuth(); } catch(e) { logDebug("initAuth error: " + e.message); }
       }, 0);
     });
   </script>
