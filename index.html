@@ -9,8 +9,8 @@
   <meta name="google-oauth-client-id"
         content="105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com" />
 
- <!-- SheetJS for Excel reading/writing (local copy) -->
-<script src="xlsx.full.min.js"></script>
+  <!-- SheetJS for Excel reading/writing -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
@@ -253,14 +253,42 @@
         <div>
           <h1>
             Consultation Meeting Processor
-            <span class="version">v0.4</span>
+            <span class="version">v0.5</span>
           </h1>
           <div class="muted">
-            Pick a consultation event, upload the audio, get a transcript, structured summary,
+            Pick a consultation event, upload the audio or text, get a transcript, structured summary,
             suggested kit from your spreadsheet template, and a proposal draft.
           </div>
         </div>
         <a href="https://frazerboorman.github.io/" class="pill">Frazer · AVD TOOLS</a>
+      </div>
+
+      <!-- API SETTINGS (hidden by default) -->
+      <div class="section">
+        <details id="apiSettings">
+          <summary style="list-style:none;display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
+            <span class="section-title" style="margin-bottom:0;">API settings</span>
+            <span class="small-note">OpenAI key (stored only in this browser)</span>
+          </summary>
+          <div style="margin-top:8px;">
+            <div class="grid">
+              <div>
+                <label for="openaiKeyInput">OpenAI API key</label>
+                <input id="openaiKeyInput" type="password" autocomplete="off"
+                       placeholder="Paste key here and click Save" />
+                <div class="small-note">
+                  Saved as <code>avd_job_report_openai_key</code> in this browser’s localStorage.
+                  Not committed to GitHub or shared with anyone.
+                </div>
+              </div>
+              <div style="align-self:end;">
+                <button type="button" id="saveOpenAiKeyBtn">Save key</button>
+                <button type="button" id="clearOpenAiKeyBtn">Forget key</button>
+              </div>
+            </div>
+            <div class="small-note" id="openaiKeyStatus"></div>
+          </div>
+        </details>
       </div>
 
       <!-- STEP 1 – Calendar event -->
@@ -298,10 +326,11 @@
         <div class="grid">
           <div>
             <label for="audioFile">Consultation audio / text file</label>
-            <!-- audio and plain text transcripts -->
+            <!-- accepts audio and plain text -->
             <input id="audioFile" type="file" accept="audio/*,text/plain" />
             <div class="small-note">
-              Export from DJI Mic / Voice Memos first, or upload a .txt transcript. File never leaves your browser except to OpenAI’s API.
+              Export from DJI Mic / Voice Memos, or upload a .txt transcript.
+              File never leaves your browser apart from calls to OpenAI’s API.
             </div>
           </div>
         </div>
@@ -310,7 +339,7 @@
           <button id="processBtn" class="primary" type="button">Process meeting (transcribe + summarise)</button>
         </div>
         <div class="small-note">
-          Uses your OpenAI key from <code>localStorage['avd_job_report_openai_key']</code>.
+          Uses your OpenAI key stored in <code>localStorage['avd_job_report_openai_key']</code>.
         </div>
 
         <div style="margin-top:10px;" class="grid">
@@ -420,7 +449,7 @@
     const CLIENT_ID = "105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com";
     const SCOPES   = "https://www.googleapis.com/auth/calendar.readonly";
     const OPENAI_KEY_STORAGE = "avd_job_report_openai_key";
-    const TEXT_MODEL = "gpt-4.1-mini";
+    const TEXT_MODEL = "gpt-4.1-mini";  // same family as other tools
     const AUDIO_MODEL = "whisper-1";
 
     let tokenClient = null;
@@ -470,6 +499,62 @@
         .replace(/&/g,"&amp;")
         .replace(/</g,"&lt;")
         .replace(/>/g,"&gt;");
+    }
+
+    // ==============
+    // OPENAI KEY UI
+    // ==============
+    function initOpenAIKeyUI() {
+      const input   = document.getElementById("openaiKeyInput");
+      const saveBtn = document.getElementById("saveOpenAiKeyBtn");
+      const clearBtn= document.getElementById("clearOpenAiKeyBtn");
+      const status  = document.getElementById("openaiKeyStatus");
+      if (!input || !saveBtn || !clearBtn || !status) {
+        logDebug("OpenAI key UI elements not found.");
+        return;
+      }
+
+      let existing = null;
+      try {
+        existing = localStorage.getItem(OPENAI_KEY_STORAGE);
+      } catch (e) {
+        logDebug("Error reading OpenAI key from localStorage: " + e.message);
+      }
+
+      if (existing) {
+        status.textContent = "Key already saved in this browser (" + existing.length + " characters).";
+      } else {
+        status.textContent = "No API key saved yet.";
+      }
+
+      saveBtn.addEventListener("click", () => {
+        const val = input.value.trim();
+        if (!val) {
+          alert("Paste your OpenAI API key first.");
+          return;
+        }
+        try {
+          localStorage.setItem(OPENAI_KEY_STORAGE, val);
+          status.textContent = "Key saved (" + val.length + " characters).";
+          input.value = "";
+          logDebug("OpenAI key saved to localStorage.");
+        } catch (e) {
+          alert("Failed to save key: " + (e.message || e));
+          logDebug("Error saving OpenAI key: " + e.message);
+        }
+      });
+
+      clearBtn.addEventListener("click", () => {
+        try {
+          localStorage.removeItem(OPENAI_KEY_STORAGE);
+          status.textContent = "Key cleared from this browser.";
+          input.value = "";
+          logDebug("OpenAI key removed from localStorage.");
+        } catch (e) {
+          alert("Failed to clear key: " + (e.message || e));
+          logDebug("Error clearing OpenAI key: " + e.message);
+        }
+      });
     }
 
     // ======================
@@ -717,6 +802,7 @@
         parsed = JSON.parse(rawText);
       } catch (e) {
         console.error("Failed to parse AI JSON:", rawText);
+        logDebug("Summary AI parse error. Raw text: " + rawText);
         throw new Error("Failed to parse AI JSON summary.");
       }
       logDebug("Structured summary parsed.");
@@ -815,16 +901,16 @@
         setAiStatus("Process the meeting first to get a structured summary.", true);
         return;
       }
-      if (typeof XLSX === "undefined") {
-        setAiStatus("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.", true);
-        logDebug("handleGenerateProducts: XLSX is undefined.");
-        return;
-      }
-
       const fileInput = document.getElementById("templateFile");
       const file = fileInput.files && fileInput.files[0];
       if (!file) {
         setAiStatus("Upload your template spreadsheet (with Products sheet) first.", true);
+        return;
+      }
+
+      if (typeof XLSX === "undefined") {
+        setAiStatus("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.", true);
+        logDebug("handleGenerateProducts: XLSX is undefined.");
         return;
       }
 
@@ -931,6 +1017,7 @@
           parsed = JSON.parse(rawText);
         } catch (e) {
           console.error("Product AI JSON parse failed:", rawText);
+          logDebug("Product AI parse error. Raw text: " + rawText);
           throw new Error("Could not parse JSON from product AI.");
         }
 
@@ -992,12 +1079,6 @@
         alert("Generate product suggestions first.");
         return;
       }
-      if (typeof XLSX === "undefined") {
-        alert("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.");
-        logDebug("handleDownloadFilledTemplate: XLSX is undefined.");
-        return;
-      }
-
       const { workbook, selection } = lastProductSelection;
       const data = selection || [];
       if (!data.length) {
@@ -1178,12 +1259,7 @@
     // =========
     window.addEventListener("DOMContentLoaded", () => {
       logDebug("DOM loaded.");
-      // Quick check: is XLSX visible?
-      if (typeof XLSX === "undefined") {
-        logDebug("Warning: XLSX global is undefined after DOMContentLoaded. Spreadsheet features will not work until this loads.");
-      } else {
-        logDebug("XLSX global is present.");
-      }
+      initOpenAIKeyUI();
 
       document.getElementById("signinBtn").addEventListener("click", signInManual);
       document.getElementById("processBtn").addEventListener("click", handleProcessMeeting);
