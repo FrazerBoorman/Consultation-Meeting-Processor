@@ -9,8 +9,8 @@
   <meta name="google-oauth-client-id"
         content="105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com" />
 
-  <!-- SheetJS for Excel reading/writing -->
- <script src="./xlsx.full.min.js"></script>
+  <!-- SheetJS for Excel reading/writing – primary CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
@@ -244,6 +244,23 @@
       font-size:11px;
       margin-top:4px;
     }
+
+    details.api {
+      margin-top:10px;
+      border-radius:12px;
+      border:1px dashed var(--border);
+      padding:6px 10px 10px;
+      background:rgba(15,23,42,0.4);
+      font-size:11px;
+    }
+    @media (prefers-color-scheme: light) {
+      details.api { background:#f3f4f6; }
+    }
+    details.api summary {
+      cursor:pointer;
+      font-size:12px;
+      color:var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -256,39 +273,11 @@
             <span class="version">v0.5</span>
           </h1>
           <div class="muted">
-            Pick a consultation event, upload the audio or text, get a transcript, structured summary,
+            Pick a consultation event, upload the audio or a text transcript, get a transcript, structured summary,
             suggested kit from your spreadsheet template, and a proposal draft.
           </div>
         </div>
         <a href="https://frazerboorman.github.io/" class="pill">Frazer · AVD TOOLS</a>
-      </div>
-
-      <!-- API SETTINGS (hidden by default) -->
-      <div class="section">
-        <details id="apiSettings">
-          <summary style="list-style:none;display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
-            <span class="section-title" style="margin-bottom:0;">API settings</span>
-            <span class="small-note">OpenAI key (stored only in this browser)</span>
-          </summary>
-          <div style="margin-top:8px;">
-            <div class="grid">
-              <div>
-                <label for="openaiKeyInput">OpenAI API key</label>
-                <input id="openaiKeyInput" type="password" autocomplete="off"
-                       placeholder="Paste key here and click Save" />
-                <div class="small-note">
-                  Saved as <code>avd_job_report_openai_key</code> in this browser’s localStorage.
-                  Not committed to GitHub or shared with anyone.
-                </div>
-              </div>
-              <div style="align-self:end;">
-                <button type="button" id="saveOpenAiKeyBtn">Save key</button>
-                <button type="button" id="clearOpenAiKeyBtn">Forget key</button>
-              </div>
-            </div>
-            <div class="small-note" id="openaiKeyStatus"></div>
-          </div>
-        </details>
       </div>
 
       <!-- STEP 1 – Calendar event -->
@@ -326,11 +315,9 @@
         <div class="grid">
           <div>
             <label for="audioFile">Consultation audio / text file</label>
-            <!-- accepts audio and plain text -->
             <input id="audioFile" type="file" accept="audio/*,text/plain" />
             <div class="small-note">
-              Export from DJI Mic / Voice Memos, or upload a .txt transcript.
-              File never leaves your browser apart from calls to OpenAI’s API.
+              Export from DJI Mic / Voice Memos first, or upload a .txt transcript. File only goes to OpenAI when transcribing.
             </div>
           </div>
         </div>
@@ -339,7 +326,7 @@
           <button id="processBtn" class="primary" type="button">Process meeting (transcribe + summarise)</button>
         </div>
         <div class="small-note">
-          Uses your OpenAI key stored in <code>localStorage['avd_job_report_openai_key']</code>.
+          Uses your OpenAI key stored in this browser (see “API key” panel below).
         </div>
 
         <div style="margin-top:10px;" class="grid">
@@ -432,8 +419,21 @@
           <div id="proposalPreview">No proposal generated yet.</div>
         </div>
       </div>
-
     </div>
+
+    <!-- API KEY PANEL -->
+    <details class="api">
+      <summary>API key (OpenAI) – hidden by default</summary>
+      <div class="small-note" style="margin-top:4px;">
+        Stored locally in <code>localStorage['avd_job_report_openai_key']</code>. Never sent anywhere except OpenAI’s API.
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;">
+        <input id="apiKeyInput" type="password" placeholder="sk-..." style="flex:1 1 220px;max-width:380px;">
+        <button type="button" id="saveApiKeyBtn">Save</button>
+        <button type="button" id="clearApiKeyBtn">Forget</button>
+      </div>
+      <div id="apiKeyStatus" class="small-note"></div>
+    </details>
 
     <!-- Global debug panel -->
     <details class="debug">
@@ -449,7 +449,7 @@
     const CLIENT_ID = "105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com";
     const SCOPES   = "https://www.googleapis.com/auth/calendar.readonly";
     const OPENAI_KEY_STORAGE = "avd_job_report_openai_key";
-    const TEXT_MODEL = "gpt-4.1-mini";  // same family as other tools
+    const TEXT_MODEL = "gpt-4.1-mini";
     const AUDIO_MODEL = "whisper-1";
 
     let tokenClient = null;
@@ -473,6 +473,30 @@
       } catch (e) {
         if (console && console.warn) console.warn("debugLog error", e);
       }
+    }
+
+    // ===========================
+    // XLSX FALLBACK LOADER
+    // ===========================
+    function ensureXLSXLoaded() {
+      if (typeof XLSX !== "undefined") {
+        logDebug("XLSX global present.");
+        return;
+      }
+      logDebug("XLSX global is undefined – loading fallback from unpkg…");
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/xlsx@0.19.3/dist/xlsx.full.min.js";
+      s.onload = () => {
+        if (typeof XLSX !== "undefined") {
+          logDebug("Fallback XLSX loaded successfully from unpkg.");
+        } else {
+          logDebug("Fallback XLSX script loaded but XLSX is still undefined.");
+        }
+      };
+      s.onerror = () => {
+        logDebug("Fallback XLSX load failed (unpkg). Spreadsheet features will not work.");
+      };
+      document.head.appendChild(s);
     }
 
     // ==============
@@ -499,62 +523,6 @@
         .replace(/&/g,"&amp;")
         .replace(/</g,"&lt;")
         .replace(/>/g,"&gt;");
-    }
-
-    // ==============
-    // OPENAI KEY UI
-    // ==============
-    function initOpenAIKeyUI() {
-      const input   = document.getElementById("openaiKeyInput");
-      const saveBtn = document.getElementById("saveOpenAiKeyBtn");
-      const clearBtn= document.getElementById("clearOpenAiKeyBtn");
-      const status  = document.getElementById("openaiKeyStatus");
-      if (!input || !saveBtn || !clearBtn || !status) {
-        logDebug("OpenAI key UI elements not found.");
-        return;
-      }
-
-      let existing = null;
-      try {
-        existing = localStorage.getItem(OPENAI_KEY_STORAGE);
-      } catch (e) {
-        logDebug("Error reading OpenAI key from localStorage: " + e.message);
-      }
-
-      if (existing) {
-        status.textContent = "Key already saved in this browser (" + existing.length + " characters).";
-      } else {
-        status.textContent = "No API key saved yet.";
-      }
-
-      saveBtn.addEventListener("click", () => {
-        const val = input.value.trim();
-        if (!val) {
-          alert("Paste your OpenAI API key first.");
-          return;
-        }
-        try {
-          localStorage.setItem(OPENAI_KEY_STORAGE, val);
-          status.textContent = "Key saved (" + val.length + " characters).";
-          input.value = "";
-          logDebug("OpenAI key saved to localStorage.");
-        } catch (e) {
-          alert("Failed to save key: " + (e.message || e));
-          logDebug("Error saving OpenAI key: " + e.message);
-        }
-      });
-
-      clearBtn.addEventListener("click", () => {
-        try {
-          localStorage.removeItem(OPENAI_KEY_STORAGE);
-          status.textContent = "Key cleared from this browser.";
-          input.value = "";
-          logDebug("OpenAI key removed from localStorage.");
-        } catch (e) {
-          alert("Failed to clear key: " + (e.message || e));
-          logDebug("Error clearing OpenAI key: " + e.message);
-        }
-      });
     }
 
     // ======================
@@ -685,7 +653,7 @@
     function getOpenAIKeyOrThrow() {
       const key = localStorage.getItem(OPENAI_KEY_STORAGE);
       if (!key) {
-        throw new Error("No OpenAI API key found in localStorage['" + OPENAI_KEY_STORAGE + "'].");
+        throw new Error("No OpenAI API key found. Set it in the API key panel.");
       }
       return key;
     }
@@ -693,7 +661,7 @@
     async function transcribeAudio(file) {
       const apiKey = getOpenAIKeyOrThrow();
 
-      // If it's a text file, just read it instead of sending to audio endpoint
+      // Text file path
       if (file.type === "text/plain" || file.name.toLowerCase().endsWith(".txt")) {
         logDebug("Treating file as plain text transcript: " + file.name);
         const text = await file.text();
@@ -703,7 +671,7 @@
       const formData = new FormData();
       formData.append("file", file);
       formData.append("model", AUDIO_MODEL);
-      formData.append("response_format","json"); // expect { text: "..." }
+      formData.append("response_format","json");
 
       logDebug("Sending audio to OpenAI whisper…");
 
@@ -758,10 +726,7 @@
         "}\n" +
         "No explanatory text outside the JSON.";
 
-      const payload = {
-        transcript,
-        eventMeta
-      };
+      const payload = { transcript, eventMeta };
 
       logDebug("Sending transcript to OpenAI for structured summary…");
 
@@ -802,7 +767,6 @@
         parsed = JSON.parse(rawText);
       } catch (e) {
         console.error("Failed to parse AI JSON:", rawText);
-        logDebug("Summary AI parse error. Raw text: " + rawText);
         throw new Error("Failed to parse AI JSON summary.");
       }
       logDebug("Structured summary parsed.");
@@ -901,16 +865,16 @@
         setAiStatus("Process the meeting first to get a structured summary.", true);
         return;
       }
+      if (typeof XLSX === "undefined") {
+        setAiStatus("Spreadsheet library (XLSX) is not available – wait a moment and try again.", true);
+        logDebug("handleGenerateProducts: XLSX is undefined.");
+        return;
+      }
+
       const fileInput = document.getElementById("templateFile");
       const file = fileInput.files && fileInput.files[0];
       if (!file) {
         setAiStatus("Upload your template spreadsheet (with Products sheet) first.", true);
-        return;
-      }
-
-      if (typeof XLSX === "undefined") {
-        setAiStatus("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.", true);
-        logDebug("handleGenerateProducts: XLSX is undefined.");
         return;
       }
 
@@ -926,7 +890,6 @@
           throw new Error("No 'Products' sheet found in template.");
         }
 
-        // raw rows: first row is headers
         const rows = XLSX.utils.sheet_to_json(productsSheet, { header:1 });
         if (!rows.length) {
           throw new Error("Products sheet is empty.");
@@ -936,7 +899,7 @@
         const dataRows = rows.slice(1);
 
         const productTableForAI = dataRows.map((row, idx) => {
-          const obj = { rowIndex: idx + 2 }; // +2: header row is 1
+          const obj = { rowIndex: idx + 2 };
           headers.forEach((h, colIdx) => {
             if (!h) return;
             obj[String(h)] = row[colIdx];
@@ -1017,7 +980,6 @@
           parsed = JSON.parse(rawText);
         } catch (e) {
           console.error("Product AI JSON parse failed:", rawText);
-          logDebug("Product AI parse error. Raw text: " + rawText);
           throw new Error("Could not parse JSON from product AI.");
         }
 
@@ -1085,8 +1047,11 @@
         alert("No suggested products to write.");
         return;
       }
+      if (typeof XLSX === "undefined") {
+        alert("Spreadsheet library (XLSX) is not available.");
+        return;
+      }
 
-      // Build AutoSelected sheet: Checklist | Qty | RowIndex | Notes | Reason | ProductSnapshot(JSON)
       const header = ["Checklist","Qty","RowIndex","Notes","Reason","ProductSnapshot"];
       const rows = [header];
       data.forEach(item => {
@@ -1129,8 +1094,7 @@
         return;
       }
       if (typeof XLSX === "undefined") {
-        setAiStatus("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.", true);
-        logDebug("handleGenerateProposal: XLSX is undefined.");
+        setAiStatus("Spreadsheet library (XLSX) is not available.", true);
         return;
       }
 
@@ -1254,12 +1218,51 @@
       }, 0);
     }
 
+    // ====================
+    // API KEY PANEL LOGIC
+    // ====================
+    function refreshApiKeyStatus() {
+      const statusEl = document.getElementById("apiKeyStatus");
+      const key = localStorage.getItem(OPENAI_KEY_STORAGE);
+      if (key) {
+        statusEl.textContent = "API key is stored in this browser.";
+      } else {
+        statusEl.textContent = "No API key stored yet.";
+      }
+    }
+
+    function handleSaveApiKey() {
+      const input = document.getElementById("apiKeyInput");
+      const v = (input.value || "").trim();
+      if (!v) {
+        alert("Enter a key first.");
+        return;
+      }
+      localStorage.setItem(OPENAI_KEY_STORAGE, v);
+      input.value = "";
+      refreshApiKeyStatus();
+      logDebug("OpenAI key saved to localStorage.");
+    }
+
+    function handleClearApiKey() {
+      localStorage.removeItem(OPENAI_KEY_STORAGE);
+      refreshApiKeyStatus();
+      logDebug("OpenAI key cleared from localStorage.");
+    }
+
     // =========
     // INIT
     // =========
     window.addEventListener("DOMContentLoaded", () => {
       logDebug("DOM loaded.");
-      initOpenAIKeyUI();
+
+      // XLSX fallback check
+      if (typeof XLSX === "undefined") {
+        logDebug("Warning: XLSX global is undefined after DOMContentLoaded. Trying fallback loader.");
+        ensureXLSXLoaded();
+      } else {
+        logDebug("XLSX detected on initial load.");
+      }
 
       document.getElementById("signinBtn").addEventListener("click", signInManual);
       document.getElementById("processBtn").addEventListener("click", handleProcessMeeting);
@@ -1278,7 +1281,13 @@
         }
       });
 
+      // API key handlers
+      document.getElementById("saveApiKeyBtn").addEventListener("click", handleSaveApiKey);
+      document.getElementById("clearApiKeyBtn").addEventListener("click", handleClearApiKey);
+      refreshApiKeyStatus();
+
       setStatus("Waiting for sign-in…", false);
+
       // Prepare Google auth client
       setTimeout(() => {
         try { initAuth(); } catch(e) { logDebug("initAuth error: " + e.message); }
