@@ -10,6 +10,7 @@
         content="105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com" />
 
   <!-- SheetJS for Excel reading/writing -->
+  <!-- If CDN causes trouble, download xlsx.full.min.js into this repo and change src to "./xlsx.full.min.js" -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -298,7 +299,7 @@
         <div class="grid">
           <div>
             <label for="audioFile">Consultation audio / text file</label>
-            <!-- now also accepts plain text files -->
+            <!-- audio and plain text transcripts -->
             <input id="audioFile" type="file" accept="audio/*,text/plain" />
             <div class="small-note">
               Export from DJI Mic / Voice Memos first, or upload a .txt transcript. File never leaves your browser except to OpenAI’s API.
@@ -420,7 +421,7 @@
     const CLIENT_ID = "105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com";
     const SCOPES   = "https://www.googleapis.com/auth/calendar.readonly";
     const OPENAI_KEY_STORAGE = "avd_job_report_openai_key";
-    const TEXT_MODEL = "gpt-4.1-mini";  // same family as other tools
+    const TEXT_MODEL = "gpt-4.1-mini";
     const AUDIO_MODEL = "whisper-1";
 
     let tokenClient = null;
@@ -815,6 +816,12 @@
         setAiStatus("Process the meeting first to get a structured summary.", true);
         return;
       }
+      if (typeof XLSX === "undefined") {
+        setAiStatus("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.", true);
+        logDebug("handleGenerateProducts: XLSX is undefined.");
+        return;
+      }
+
       const fileInput = document.getElementById("templateFile");
       const file = fileInput.files && fileInput.files[0];
       if (!file) {
@@ -986,6 +993,12 @@
         alert("Generate product suggestions first.");
         return;
       }
+      if (typeof XLSX === "undefined") {
+        alert("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.");
+        logDebug("handleDownloadFilledTemplate: XLSX is undefined.");
+        return;
+      }
+
       const { workbook, selection } = lastProductSelection;
       const data = selection || [];
       if (!data.length) {
@@ -1035,6 +1048,12 @@
         setAiStatus("Upload your priced spreadsheet first.", true);
         return;
       }
+      if (typeof XLSX === "undefined") {
+        setAiStatus("Spreadsheet library (XLSX) is not available – check that xlsx.full.min.js has loaded.", true);
+        logDebug("handleGenerateProposal: XLSX is undefined.");
+        return;
+      }
+
       document.getElementById("generateProposalBtn").disabled = true;
       setAiStatus("Reading priced sheet & generating proposal…", false);
 
@@ -1160,6 +1179,13 @@
     // =========
     window.addEventListener("DOMContentLoaded", () => {
       logDebug("DOM loaded.");
+      // Quick check: is XLSX visible?
+      if (typeof XLSX === "undefined") {
+        logDebug("Warning: XLSX global is undefined after DOMContentLoaded. Spreadsheet features will not work until this loads.");
+      } else {
+        logDebug("XLSX global is present.");
+      }
+
       document.getElementById("signinBtn").addEventListener("click", signInManual);
       document.getElementById("processBtn").addEventListener("click", handleProcessMeeting);
       document.getElementById("generateProductsBtn").addEventListener("click", handleGenerateProducts);
