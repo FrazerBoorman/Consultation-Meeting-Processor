@@ -392,4 +392,210 @@
               The tool will read the <strong>Clean</strong> sheet if present, otherwise the first sheet.
             </div>
           </div>
-        </
+        </div>
+
+        <div class="btn-row">
+          <button id="generateProposalBtn" type="button" class="primary">Generate proposal / quote</button>
+          <button id="downloadProposalDocBtn" type="button">Download proposal as Word (.doc)</button>
+        </div>
+
+        <div style="margin-top:10px;">
+          <label>Proposal preview</label>
+          <div id="proposalPreview">No proposal generated yet.</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Global debug panel -->
+    <details class="debug">
+      <summary>Debug panel</summary>
+      <pre id="debugLog">(empty)</pre>
+    </details>
+  </div>
+
+  <script>
+    // =========================
+    // CONFIG / SHARED CONSTANTS
+    // =========================
+    const CLIENT_ID = "105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com";
+    const SCOPES   = "https://www.googleapis.com/auth/calendar.readonly";
+    const OPENAI_KEY_STORAGE = "avd_job_report_openai_key";
+    const TEXT_MODEL = "gpt-4.1-mini";  // same family as other tools
+    const AUDIO_MODEL = "whisper-1";
+
+    let tokenClient = null;
+    let accessToken = null;
+    let currentEvents = [];
+    let lastTranscript = "";
+    let lastStructuredSummary = null;
+    let lastProductSelection = null;
+    let lastProposalText = "";
+
+    // ==============
+    // DEBUG LOGGER
+    // ==============
+    function logDebug(msg) {
+      try {
+        const el = document.getElementById("debugLog");
+        if (!el) return;
+        const ts = new Date().toISOString().replace("T"," ").slice(0,19);
+        el.textContent += "[" + ts + "] " + msg + "\n";
+        el.scrollTop = el.scrollHeight;
+      } catch (e) {
+        if (console && console.warn) console.warn("debugLog error", e);
+      }
+    }
+
+    // ==============
+    // STATUS HELPERS
+    // ==============
+    function setStatus(msg, isError) {
+      const el = document.getElementById("status");
+      if (!el) return;
+      el.textContent = "Status: " + msg;
+      el.className = isError ? "danger" : "";
+      logDebug("STATUS: " + msg);
+    }
+
+    function setAiStatus(msg, isError) {
+      const el = document.getElementById("aiStatus");
+      if (!el) return;
+      el.textContent = msg || "";
+      el.className = isError ? "danger" : "";
+      if (msg) logDebug("AI: " + msg);
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g,"&amp;")
+        .replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;");
+    }
+
+    // ======================
+    // GOOGLE AUTH & CALENDAR
+    // ======================
+    function getEventStartDate(ev) {
+      if (!ev || !ev.start) return null;
+      if (ev.start.date) return new Date(ev.start.date + "T00:00:00Z");
+      if (ev.start.dateTime) return new Date(ev.start.dateTime);
+      return null;
+    }
+    function extractEventDate(ev) {
+      if (!ev || !ev.start) return "";
+      if (ev.start.date) return ev.start.date;
+      if (ev.start.dateTime) return ev.start.dateTime.slice(0,10);
+      return "";
+    }
+
+    function initAuth() {
+      if (!window.google || !google.accounts || !google.accounts.oauth2) {
+        logDebug("Google auth library not ready yet.");
+        return;
+      }
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        prompt: "",
+        callback: (resp) => {
+          if (resp && resp.access_token) {
+            accessToken = resp.access_token;
+            setStatus("Signed in. Loading events…", false);
+            loadRecentEvents();
+          } else {
+            setStatus("Sign-in failed.", true);
+          }
+        }
+      });
+      logDebug("Google tokenClient initialised.");
+    }
+
+    function signInManual() {
+      if (!tokenClient) initAuth();
+      if (!tokenClient) {
+        setStatus("Google auth not ready.", true);
+        return;
+      }
+      logDebug("Requesting Google access token…");
+      tokenClient.requestAccessToken();
+    }
+
+    async function loadRecentEvents() {
+      if (!accessToken) {
+        setStatus("No access token yet.", true);
+        return;
+      }
+      const calId = (document.getElementById("calendarId").value || "primary").trim();
+
+      const now = new Date();
+      const end = new Date(now);
+      end.setHours(23,59,59,999);
+      const start = new Date(now);
+      start.setDate(start.getDate() - 14);
+      start.setHours(0,0,0,0);
+
+      const url = new URL(
+        "https://www.googleapis.com/calendar/v3/calendars/" +
+        encodeURIComponent(calId) +
+        "/events"
+      );
+      url.searchParams.set("singleEvents","true");
+      url.searchParams.set("orderBy","startTime");
+      url.searchParams.set("timeMin", start.toISOString());
+      url.searchParams.set("timeMax", end.toISOString());
+      url.searchParams.set("maxResults","250");
+
+      logDebug("Fetching events: " + url.toString());
+
+      const res = await fetch(url.toString(), {
+        headers: { "Authorization":"Bearer " + accessToken }
+      });
+      if (!res.ok) {
+        setStatus("Calendar API error " + res.status, true);
+        return;
+      }
+      const data = await res.json();
+      const items = data.items || [];
+      const nowRef = new Date();
+
+      const processed = items
+        .map(ev => ({ ev, startDate: getEventStartDate(ev) }))
+        .filter(obj => obj.startDate && obj.startDate <= nowRef)
+        .sort((a,b) => b.startDate - a.startDate);
+
+      currentEvents = processed.map(x => x.ev);
+
+      const sel = document.getElementById("eventSelect");
+      sel.innerHTML = "";
+      if (!currentEvents.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "No events in last 14 days.";
+        sel.appendChild(opt);
+        setStatus("No recent events found.", false);
+        return;
+      }
+
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "— Select consultation —";
+      sel.appendChild(placeholder);
+
+      currentEvents.forEach((ev, idx) => {
+        const title = ev.summary || "(no title)";
+        const d = extractEventDate(ev);
+        const opt = document.createElement("option");
+        opt.value = String(idx);
+        opt.textContent = (d ? (d + " – ") : "") + title;
+        sel.appendChild(opt);
+      });
+
+      setStatus("Loaded " + currentEvents.length + " events.", false);
+      logDebug("Loaded " + currentEvents.length + " events.");
+    }
+    
+    // Rest of the script continues...
+  </script>
+</body>
+</html>
