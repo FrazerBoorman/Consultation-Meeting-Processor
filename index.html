@@ -10,7 +10,7 @@
         content="105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com" />
 
   <!-- SheetJS for Excel reading/writing -->
-  <script type="text/javascript" src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
@@ -432,7 +432,7 @@
     let lastProposalText = "";
 
     // ============== 
-    // DEBUG LOGGER
+    // DEBUG LOGGER 
     // ==============
     function logDebug(msg) {
       try {
@@ -600,7 +600,7 @@
     function getOpenAIKeyOrThrow() {
       const key = localStorage.getItem(OPENAI_KEY_STORAGE);
       if (!key) {
-        throw new Error("No OpenAI API key found in localStorage['" + OPENAI_KEY_STORAGE + "'].");
+        throw new Error("No OpenAI API key found in localStorage['" + OPENAI_KEY_STORAGE + "']." );
       }
       return key;
     }
@@ -941,45 +941,4 @@
         console.error(e);
         setAiStatus(e.message || "Error generating product suggestions.", true);
       } finally {
-        document.getElementById("generateProductsBtn").disabled = false;
-      }
-    }
-
-    function renderProductSelectionTable(state) {
-      const wrap = document.getElementById("productsTableWrapper");
-      if (!state || !state.selection || !state.selection.length) {
-        wrap.textContent = "No products suggested.";
-        return;
-      }
-      const rowsHtml = state.selection.map(item => {
-        const rowIdx = item.rowIndex;
-        const checklist = item.checklist || "";
-        const qty = item.quantity != null ? String(item.quantity) : "";
-        const notes = item.notes || "";
-        const reason = item.reason || "";
-        const snapshot = item.productSnapshot || {};
-        const name = snapshot.Name || snapshot.name || snapshot.Product || "";
-        return "<tr>" +
-          "<td>" + escapeHtml(checklist) + "</td>" +
-          "<td>" + escapeHtml(String(qty)) + "</td>" +
-          "<td>" + escapeHtml(name || "[from row " + rowIdx + "]") + "</td>" +
-          "<td>" + escapeHtml(notes) + "</td>" +
-          "<td>" + escapeHtml(reason) + "</td>" +
-        "</tr>";
-      }).join("");
-
-      wrap.innerHTML =
-        "<table>" +
-          "<thead><tr>" +
-            "<th>Checklist</th>" +
-            "<th>Qty</th>" +
-            "<th>Product</th>" +
-            "<th>Notes</th>" +
-            "<th>Why chosen</th>" +
-          "</tr></thead>" +
-          "<tbody>" + rowsHtml + "</tbody>" +
-        "</table>";
-    }
-  </script>
-</body>
-</html>
+        document.getElementById("
