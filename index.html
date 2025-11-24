@@ -8,7 +8,6 @@
   <!-- Google OAuth client ID (same as other tools) -->
   <meta name="google-oauth-client-id"
         content="105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com" />
-
   <!-- SheetJS for Excel reading/writing – primary CDN -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <!-- Google Identity Services -->
@@ -475,31 +474,7 @@
       }
     }
 
-    // ===========================
-    // XLSX FALLBACK LOADER
-    // ===========================
-    function ensureXLSXLoaded() {
-  if (typeof XLSX !== "undefined") {
-    logDebug("XLSX global present.");
-    return;
-  }
-  logDebug("XLSX global is undefined – loading fallback from SheetJS CDN…");
-  const s = document.createElement("script");
-  s.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
-  s.onload = () => {
-    if (typeof XLSX !== "undefined") {
-      logDebug("Fallback XLSX loaded successfully from SheetJS CDN.");
-    } else {
-      logDebug("Fallback XLSX script loaded but XLSX is still undefined.");
-    }
-  };
-  s.onerror = () => {
-    logDebug("Fallback XLSX load failed (SheetJS CDN). Spreadsheet features will not work.");
-  };
-  document.head.appendChild(s);
-}
 
-    }
 
     // ==============
     // STATUS HELPERS
@@ -1258,13 +1233,7 @@
     window.addEventListener("DOMContentLoaded", () => {
       logDebug("DOM loaded.");
 
-      // XLSX fallback check
-      if (typeof XLSX === "undefined") {
-        logDebug("Warning: XLSX global is undefined after DOMContentLoaded. Trying fallback loader.");
-        ensureXLSXLoaded();
-      } else {
-        logDebug("XLSX detected on initial load.");
-      }
+      
 
       document.getElementById("signinBtn").addEventListener("click", signInManual);
       document.getElementById("processBtn").addEventListener("click", handleProcessMeeting);
