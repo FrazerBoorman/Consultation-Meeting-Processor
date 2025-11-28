@@ -260,20 +260,6 @@
       font-size:12px;
       color:var(--muted);
     }
-
-    /* New: code-box for replacement index display */
-    .code-box {
-      max-height:400px;
-      overflow:auto;
-      border-radius:10px;
-      border:1px solid var(--border);
-      padding:8px;
-      background:var(--panel);
-      font-size:11px;
-      line-height:1.4;
-      white-space:pre;
-      font-family: SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-    }
   </style>
 </head>
 <body>
@@ -453,32 +439,6 @@
       <summary>Debug panel</summary>
       <pre id="debugLog">(empty)</pre>
     </details>
-
-    <!-- AI Debugger panel -->
-    <details class="debug">
-      <summary>AI Debugger (cross-check index + debug log with GPT-5.1)</summary>
-      <div class="small-note" style="margin-top:4px;">
-        Uses your stored OpenAI key to send this tool’s full HTML + the debug log to the GPT-5.1 model.
-        It will analyse the failure, explain suspected causes, list targeted changes, and produce a replacement index.
-      </div>
-      <div class="btn-row" style="margin-top:6px;">
-        <button type="button" id="aiDebugBtn" class="primary">Run AI Debugger (uses GPT-5.1)</button>
-      </div>
-      <div class="small-note" style="margin-top:4px;">
-        Nothing is sent anywhere else. Only the page HTML and debug log go to OpenAI’s API.
-      </div>
-      <pre id="aiDebugOutput" style="margin-top:6px;">(AI debugger has not run yet.)</pre>
-    </details>
-
-    <!-- Replacement Index panel -->
-    <details class="debug">
-      <summary>Replacement Index (proposed new index.html)</summary>
-      <div class="small-note" style="margin-top:4px;">
-        When the AI Debugger finds issues, it will produce a full replacement index.html here.
-        Review carefully before copying across.
-      </div>
-      <pre id="replacementIndexBox" class="code-box">(no replacement index generated yet)</pre>
-    </details>
   </div>
 
   <script>
@@ -490,7 +450,6 @@
     const OPENAI_KEY_STORAGE = "avd_job_report_openai_key";
     const TEXT_MODEL = "gpt-4.1-mini";
     const AUDIO_MODEL = "whisper-1";
-    const DEBUG_MODEL = "gpt-5.1"; // for AI Debugger
 
     let tokenClient = null;
     let accessToken = null;
@@ -514,6 +473,8 @@
         if (console && console.warn) console.warn("debugLog error", e);
       }
     }
+
+
 
     // ==============
     // STATUS HELPERS
@@ -1003,4 +964,306 @@
           workbook: wb,
           headers,
           rows,
-          selection:
+          selection: parsed.items || []
+        };
+
+        renderProductSelectionTable(lastProductSelection);
+        setAiStatus("Product suggestions generated. Review before downloading workbook.", false);
+      } catch (e) {
+        console.error(e);
+        setAiStatus(e.message || "Error generating product suggestions.", true);
+      } finally {
+        document.getElementById("generateProductsBtn").disabled = false;
+      }
+    }
+
+    function renderProductSelectionTable(state) {
+      const wrap = document.getElementById("productsTableWrapper");
+      if (!state || !state.selection || !state.selection.length) {
+        wrap.textContent = "No products suggested.";
+        return;
+      }
+      const rowsHtml = state.selection.map(item => {
+        const rowIdx = item.rowIndex;
+        const checklist = item.checklist || "";
+        const qty = item.quantity != null ? String(item.quantity) : "";
+        const notes = item.notes || "";
+        const reason = item.reason || "";
+        const snapshot = item.productSnapshot || {};
+        const name = snapshot.Name || snapshot.name || snapshot.Product || "";
+        return "<tr>" +
+          "<td>" + escapeHtml(checklist) + "</td>" +
+          "<td>" + escapeHtml(String(qty)) + "</td>" +
+          "<td>" + escapeHtml(name || "[from row " + rowIdx + "]") + "</td>" +
+          "<td>" + escapeHtml(notes) + "</td>" +
+          "<td>" + escapeHtml(reason) + "</td>" +
+        "</tr>";
+      }).join("");
+
+      wrap.innerHTML =
+        "<table>" +
+          "<thead><tr>" +
+            "<th>Checklist</th>" +
+            "<th>Qty</th>" +
+            "<th>Product</th>" +
+            "<th>Notes</th>" +
+            "<th>Why chosen</th>" +
+          "</tr></thead>" +
+          "<tbody>" + rowsHtml + "</tbody>" +
+        "</table>";
+    }
+
+    function handleDownloadFilledTemplate() {
+      if (!lastProductSelection) {
+        alert("Generate product suggestions first.");
+        return;
+      }
+      const { workbook, selection } = lastProductSelection;
+      const data = selection || [];
+      if (!data.length) {
+        alert("No suggested products to write.");
+        return;
+      }
+      if (typeof XLSX === "undefined") {
+        alert("Spreadsheet library (XLSX) is not available.");
+        return;
+      }
+
+      const header = ["Checklist","Qty","RowIndex","Notes","Reason","ProductSnapshot"];
+      const rows = [header];
+      data.forEach(item => {
+        rows.push([
+          item.checklist || "",
+          item.quantity != null ? item.quantity : "",
+          item.rowIndex != null ? item.rowIndex : "",
+          item.notes || "",
+          item.reason || "",
+          JSON.stringify(item.productSnapshot || {})
+        ]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      workbook.Sheets["AutoSelected"] = ws;
+      if (!workbook.SheetNames.includes("AutoSelected")) {
+        workbook.SheetNames.push("AutoSelected");
+      }
+
+      const wbout = XLSX.write(workbook, { bookType:"xlsx", type:"array" });
+      const blob = new Blob([wbout], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "template_with_autoselected.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+      }, 0);
+    }
+
+    // ======================
+    // STEP 4: PROPOSAL / QUOTE
+    // ======================
+    async function handleGenerateProposal() {
+      const pricedInput = document.getElementById("pricedFile");
+      const file = pricedInput.files && pricedInput.files[0];
+      if (!file) {
+        setAiStatus("Upload your priced spreadsheet first.", true);
+        return;
+      }
+      if (typeof XLSX === "undefined") {
+        setAiStatus("Spreadsheet library (XLSX) is not available.", true);
+        return;
+      }
+
+      document.getElementById("generateProposalBtn").disabled = true;
+      setAiStatus("Reading priced sheet & generating proposal…", false);
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const wb = XLSX.read(arrayBuffer, { type:"array" });
+
+        let sheetName = "Clean";
+        if (!wb.Sheets[sheetName]) {
+          sheetName = wb.SheetNames[0];
+        }
+        const sheet = wb.Sheets[sheetName];
+        if (!sheet) throw new Error("No usable sheet found in priced workbook.");
+        const table = XLSX.utils.sheet_to_json(sheet, { header:1 });
+
+        const apiKey = getOpenAIKeyOrThrow();
+        const systemPrompt =
+          "You are generating a client-facing AV proposal/quote based on a priced spreadsheet and a consultation summary.\n\n" +
+          "You will receive:\n" +
+          "- A structured consultation summary (issues, current equipment, agreed solution).\n" +
+          "- A table from the 'Clean' (or equivalent) sheet of a spreadsheet that includes products, prices, quantities, totals, and possibly labour/time.\n\n" +
+          "Your job:\n" +
+          "1) Identify the main components that should be described in the proposal (projectors, screens/TVs, main speakers, amps, microphones, key control hardware, streaming hardware etc.).\n" +
+          "   Do NOT write paragraphs about minor items (mounts, brackets, small accessories).\n" +
+          "2) For each main component, write a short, clear description referencing relevant details from the consultation summary\n" +
+          "   (e.g. mounting position like 'left wall', use-cases like film nights, speech clarity, etc.).\n" +
+          "3) Group costs sensibly (e.g. Audio, Visual, Control, Infrastructure, Labour) and show totals per group plus a grand total.\n" +
+          "4) Mention estimated days on site, based on any labour/time information in the table (if present). If there is genuinely no\n" +
+          "   indication of labour/time, say 'Installation duration to be confirmed'.\n" +
+          "5) Write this as a proposal/quote that could be sent to the client, in clear UK English.\n\n" +
+          "Rules:\n" +
+          "- Do NOT invent extra products or prices. Work only from the spreadsheet table.\n" +
+          "- You may infer reasonable grouping from column headers (e.g. 'Category', 'Checklist', etc.).\n" +
+          "- Do NOT expose raw spreadsheet table in the body, but you can refer to product names.\n\n" +
+          "Structure the output as:\n" +
+          "1) Short opening paragraph referencing the client's situation.\n" +
+          "2) Bullet list of key benefits of the proposed solution.\n" +
+          "3) Headings for each main area (Audio System, Visual System, Control/Operation, Streaming/Broadcast, Infrastructure & Cabling, Labour & Timescales).\n" +
+          "4) Under each heading, short paragraphs describing what is included.\n" +
+          "5) Section with pricing breakdown per area and overall total.\n" +
+          "6) Closing paragraph about next steps.\n";
+
+        const payload = {
+          structuredSummary: lastStructuredSummary,
+          pricedSheetName: sheetName,
+          pricedTable: table
+        };
+
+        const res = await fetch("https://api.openai.com/v1/responses", {
+          method:"POST",
+          headers:{
+            "Content-Type":"application/json",
+            "Authorization":"Bearer " + apiKey
+          },
+          body: JSON.stringify({
+            model: TEXT_MODEL,
+            input: [
+              { role:"system", content: systemPrompt },
+              { role:"user", content: JSON.stringify(payload) }
+            ]
+          })
+        });
+
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          throw new Error("Proposal AI error " + res.status + ": " + txt);
+        }
+        const data = await res.json();
+        let text = "";
+        if (
+          data.output &&
+          data.output[0] &&
+          data.output[0].content &&
+          data.output[0].content[0] &&
+          data.output[0].content[0].text
+        ) {
+          text = data.output[0].content[0].text;
+        } else {
+          throw new Error("Unexpected proposal response shape.");
+        }
+
+        lastProposalText = text;
+        document.getElementById("proposalPreview").textContent = text;
+        setAiStatus("Proposal generated. Review and tweak as needed.", false);
+      } catch (e) {
+        console.error(e);
+        setAiStatus(e.message || "Error generating proposal.", true);
+      } finally {
+        document.getElementById("generateProposalBtn").disabled = false;
+      }
+    }
+
+    function handleDownloadProposalDoc() {
+      if (!lastProposalText) {
+        alert("Generate a proposal first.");
+        return;
+      }
+      const html =
+        "<!doctype html><html><head><meta charset='utf-8'>" +
+        "<title>Proposal</title>" +
+        "<style>" +
+        "body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#000;}"+
+        "h1,h2,h3{font-weight:bold;}"+
+        "</style></head><body>" +
+        "<pre style='white-space:pre-wrap;font-family:Calibri,Arial,sans-serif;'>" +
+        escapeHtml(lastProposalText) +
+        "</pre></body></html>";
+
+      const blob = new Blob([html], { type:"application/msword" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "proposal.doc";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+      }, 0);
+    }
+
+    // ====================
+    // API KEY PANEL LOGIC
+    // ====================
+    function refreshApiKeyStatus() {
+      const statusEl = document.getElementById("apiKeyStatus");
+      const key = localStorage.getItem(OPENAI_KEY_STORAGE);
+      if (key) {
+        statusEl.textContent = "API key is stored in this browser.";
+      } else {
+        statusEl.textContent = "No API key stored yet.";
+      }
+    }
+
+    function handleSaveApiKey() {
+      const input = document.getElementById("apiKeyInput");
+      const v = (input.value || "").trim();
+      if (!v) {
+        alert("Enter a key first.");
+        return;
+      }
+      localStorage.setItem(OPENAI_KEY_STORAGE, v);
+      input.value = "";
+      refreshApiKeyStatus();
+      logDebug("OpenAI key saved to localStorage.");
+    }
+
+    function handleClearApiKey() {
+      localStorage.removeItem(OPENAI_KEY_STORAGE);
+      refreshApiKeyStatus();
+      logDebug("OpenAI key cleared from localStorage.");
+    }
+
+    // =========
+    // INIT
+    // =========
+    window.addEventListener("DOMContentLoaded", () => {
+      logDebug("DOM loaded.");
+
+      
+
+      document.getElementById("signinBtn").addEventListener("click", signInManual);
+      document.getElementById("processBtn").addEventListener("click", handleProcessMeeting);
+      document.getElementById("generateProductsBtn").addEventListener("click", handleGenerateProducts);
+      document.getElementById("downloadFilledTemplateBtn").addEventListener("click", handleDownloadFilledTemplate);
+      document.getElementById("generateProposalBtn").addEventListener("click", handleGenerateProposal);
+      document.getElementById("downloadProposalDocBtn").addEventListener("click", handleDownloadProposalDoc);
+
+      const eventSelect = document.getElementById("eventSelect");
+      eventSelect.addEventListener("change", () => {
+        const idx = eventSelect.value;
+        if (!idx) return;
+        const ev = currentEvents[Number(idx)];
+        if (ev) {
+          setStatus("Selected: " + (ev.summary || "(no title)"), false);
+        }
+      });
+
+      // API key handlers
+      document.getElementById("saveApiKeyBtn").addEventListener("click", handleSaveApiKey);
+      document.getElementById("clearApiKeyBtn").addEventListener("click", handleClearApiKey);
+      refreshApiKeyStatus();
+
+      setStatus("Waiting for sign-in…", false);
+
+      // Prepare Google auth client
+      setTimeout(() => {
+        try { initAuth(); } catch(e) { logDebug("initAuth error: " + e.message); }
+      }, 0);
+    });
+  </script>
+</body>
+</html>
