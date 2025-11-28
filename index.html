@@ -439,6 +439,40 @@
       <summary>Debug panel</summary>
       <pre id="debugLog">(empty)</pre>
     </details>
+
+    <!-- AI Debugger panel -->
+    <details class="debug">
+      <summary>AI Debugger</summary>
+      <div class="small-note" style="margin-top:4px;">
+        Uses your OpenAI API key and the v5.1 model to analyse this tool’s index.html, debug log, and console errors.
+        It follows your “Be Strict” rules and either proposes a replacement index.html or a prompt you can paste into ChatGPT.
+      </div>
+      <div class="small-note" style="margin-top:6px;">
+        Optional notes for the debugger (what you were doing, what broke):
+      </div>
+      <textarea id="aiDebugNotes" style="width:100%;min-height:70px;margin-top:4px;"></textarea>
+      <div class="btn-row" style="margin-top:6px;">
+        <button type="button" id="runAiDebugBtn">Run AI Debugger (5.1)</button>
+      </div>
+      <div id="aiDebugStatus" class="small-note" style="margin-top:4px;"></div>
+      <div class="small-note" style="margin-top:6px;">
+        AI assessment (issues found, reasons, planned fixes):
+      </div>
+      <pre id="aiDebugExplanation"></pre>
+      <div class="small-note" style="margin-top:6px;">
+        Captured console errors (auto-collected):
+      </div>
+      <pre id="consoleErrorLog"></pre>
+    </details>
+
+    <!-- Replacement Index panel -->
+    <details class="debug">
+      <summary>Replacement index.html from AI Debugger</summary>
+      <div class="small-note" style="margin-top:4px;">
+        When AI Debugger provides a new index, it appears here. Copy this into your editor if you accept the changes.
+      </div>
+      <textarea id="aiDebugReplacementIndex" style="width:100%;min-height:200px;margin-top:6px;white-space:pre;"></textarea>
+    </details>
   </div>
 
   <script>
@@ -450,6 +484,7 @@
     const OPENAI_KEY_STORAGE = "avd_job_report_openai_key";
     const TEXT_MODEL = "gpt-4.1-mini";
     const AUDIO_MODEL = "whisper-1";
+    const DEBUG_MODEL = "gpt-5.1";
 
     let tokenClient = null;
     let accessToken = null;
@@ -473,6 +508,66 @@
         if (console && console.warn) console.warn("debugLog error", e);
       }
     }
+
+    // =========================
+    // CONSOLE ERROR CAPTURE
+    // =========================
+    const capturedConsoleErrors = [];
+
+    function appendConsoleError(msg) {
+      const ts = new Date().toISOString().replace("T"," ").slice(0,19);
+      const line = "[" + ts + "] " + msg;
+      capturedConsoleErrors.push(line);
+      try {
+        const pre = document.getElementById("consoleErrorLog");
+        if (pre) {
+          pre.textContent = capturedConsoleErrors.join("\n");
+        }
+      } catch (e) {
+        // ignore UI update errors
+      }
+      logDebug("CONSOLE ERROR: " + msg);
+    }
+
+    (function hookConsoleForErrors() {
+      try {
+        const originalError = console.error ? console.error.bind(console) : null;
+        console.error = function() {
+          try {
+            const msg = Array.from(arguments).map(a => String(a)).join(" ");
+            appendConsoleError(msg);
+          } catch (e) {
+            // ignore
+          }
+          if (originalError) {
+            originalError.apply(console, arguments);
+          }
+        };
+      } catch (e) {
+        // ignore hooking errors
+      }
+
+      window.addEventListener("error", (event) => {
+        try {
+          const msg = event && event.message ? event.message : String(event.error || "Unknown error");
+          appendConsoleError("window.error: " + msg);
+        } catch (e2) {
+          // ignore
+        }
+      });
+
+      window.addEventListener("unhandledrejection", (event) => {
+        try {
+          const reason = event && event.reason ? event.reason : "Unknown rejection";
+          const msg = typeof reason === "string"
+            ? reason
+            : (reason && reason.message) ? reason.message : String(reason);
+          appendConsoleError("unhandledrejection: " + msg);
+        } catch (e2) {
+          // ignore
+        }
+      });
+    })();
 
 
 
@@ -1227,13 +1322,215 @@
       logDebug("OpenAI key cleared from localStorage.");
     }
 
+    // ======================
+    // AI DEBUGGER (5.1, "Be Strict")
+    // ======================
+    async function handleRunAiDebug() {
+      const statusEl = document.getElementById("aiDebugStatus");
+      const explanationEl = document.getElementById("aiDebugExplanation");
+      const replacementEl = document.getElementById("aiDebugReplacementIndex");
+
+      if (statusEl) statusEl.textContent = "";
+      if (explanationEl) explanationEl.textContent = "";
+      if (replacementEl) replacementEl.value = "";
+
+      let apiKey;
+      try {
+        apiKey = getOpenAIKeyOrThrow();
+      } catch (e) {
+        if (statusEl) {
+          statusEl.textContent = e.message || "No OpenAI API key found.";
+          statusEl.className = "small-note danger";
+        }
+        logDebug("AI Debugger aborted: " + (e.message || e));
+        return;
+      }
+
+      const debugLogEl = document.getElementById("debugLog");
+      const notesEl = document.getElementById("aiDebugNotes");
+
+      const payload = {
+        indexHtml: document.documentElement ? document.documentElement.outerHTML : "",
+        debugLog: debugLogEl ? debugLogEl.textContent || "" : "",
+        consoleErrors: capturedConsoleErrors.slice(),
+        userNotes: notesEl ? (notesEl.value || "") : ""
+      };
+
+      const systemPrompt =
+        "You are an expert web engineer and tooling specialist helping maintain a single-page HTML/JS tool called the 'Consultation Meeting Processor'.\n" +
+        "The page is a self-contained index.html file with inline CSS and JavaScript. It does the following:\n" +
+        "- Uses Google Calendar (OAuth2) to load recent consultation events.\n" +
+        "- Lets the user upload audio or text transcripts and calls OpenAI Whisper to transcribe when needed.\n" +
+        "- Uses OpenAI text models to: (1) structure the consultation summary; (2) select products from a 'Products' sheet; (3) generate a client-facing proposal.\n" +
+        "- Includes a debug log panel, and an AI Debugger panel that sends the entire index.html, debug log and console errors to you.\n\n" +
+        "You MUST follow the user's 'Be Strict' rules when proposing code fixes:\n" +
+        "1) Treat the provided indexHtml as the single source of truth.\n" +
+        "2) Only change code that is directly necessary to:\n" +
+        "   - Fix clear bugs / runtime errors.\n" +
+        "   - Wire up or repair the AI Debugger itself.\n" +
+        "   - Keep the file syntactically valid.\n" +
+        "3) Do NOT refactor, rename, or reformat unrelated code.\n" +
+        "4) Preserve the structure, layout, and indentation as much as possible.\n" +
+        "5) When you return a new index.html, it MUST be complete and non-truncated, starting with <!doctype html> and ending with </html>.\n" +
+        "6) When you generate a replacement index.html, bump the version pill in the <span class=\"version\"> element by a small step (e.g. v0.5 -> v0.6).\n" +
+        "7) If the issue cannot be solved purely by editing this index.html (e.g. external API keys, CORS, account configuration), you MUST NOT guess fixes in code. Instead, you will prepare a clear 'externalHelpPrompt' text the user can paste into ChatGPT for deeper discussion.\n\n" +
+        "You are given:\n" +
+        "- indexHtml: the full current HTML of the page.\n" +
+        "- debugLog: the tool's internal debug log.\n" +
+        "- consoleErrors: errors captured from the browser console.\n" +
+        "- userNotes: any extra notes the engineer added.\n\n" +
+        "Your job:\n" +
+        "1) Carefully inspect indexHtml, debugLog, consoleErrors, and userNotes to identify likely causes of failure.\n" +
+        "2) Decide if the problem can reasonably be fixed by editing indexHtml alone.\n" +
+        "3) If yes:\n" +
+        "   - Prepare a concise description of the issues and fixes.\n" +
+        "   - Produce a SINGLE replacement index.html string that incorporates only the necessary changes, obeying the 'Be Strict' rules.\n" +
+        "   - Ensure the result is syntactically valid HTML/JS and preserves all existing behaviour unless you are deliberately fixing a bug.\n" +
+        "4) If no (e.g. missing API key, external configuration, environment/network issue):\n" +
+        "   - Do NOT fabricate code fixes.\n" +
+        "   - Instead, prepare a clear prompt the user can paste into ChatGPT, summarising what you see and what they should investigate.\n\n" +
+        "Output STRICT JSON ONLY in this schema (no extra commentary):\n" +
+        "{\n" +
+        "  \"mode\": \"replacement_index\" | \"external_help\",\n" +
+        "  \"issuesSummary\": \"Short high-level summary of what seems wrong.\",\n" +
+        "  \"details\": [\n" +
+        "    {\n" +
+        "      \"issue\": \"What is wrong.\",\n" +
+        "      \"likelyCause\": \"Why it is happening.\",\n" +
+        "      \"fix\": \"What change you plan to make or why it cannot be fixed in code.\",\n" +
+        "      \"changedArea\": \"Which part of the file this concerns (e.g. Google auth, Whisper, AI Debugger, Spreadsheet, Proposal).\"\n" +
+        "    }\n" +
+        "  ],\n" +
+        "  \"newIndexHtml\": \"<!doctype html>...full replacement index.html...\",\n" +
+        "  \"externalHelpPrompt\": \"If mode is external_help, a ready-made prompt the user can paste into ChatGPT describing the issue in detail.\"\n" +
+        "}\n" +
+        "If mode is \"replacement_index\", you MUST provide a complete non-truncated newIndexHtml and may leave externalHelpPrompt empty.\n" +
+        "If mode is \"external_help\", you MUST provide a strong externalHelpPrompt and may leave newIndexHtml empty or omitted.\n";
+
+      if (statusEl) {
+        statusEl.textContent = "Running AI Debugger with v5.1…";
+        statusEl.className = "small-note";
+      }
+      logDebug("AI Debugger: sending indexHtml, debugLog, and consoleErrors to OpenAI 5.1…");
+
+      try {
+        const res = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type":"application/json",
+            "Authorization":"Bearer " + apiKey
+          },
+          body: JSON.stringify({
+            model: DEBUG_MODEL,
+            input: [
+              { role:"system", content: systemPrompt },
+              { role:"user", content: JSON.stringify(payload) }
+            ]
+          })
+        });
+
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          const msg = "AI Debugger error " + res.status + ": " + txt;
+          appendConsoleError(msg);
+          if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.className = "small-note danger";
+          }
+          return;
+        }
+
+        const data = await res.json();
+        let rawText = "";
+        if (
+          data.output &&
+          data.output[0] &&
+          data.output[0].content &&
+          data.output[0].content[0] &&
+          data.output[0].content[0].text
+        ) {
+          rawText = data.output[0].content[0].text;
+        } else {
+          throw new Error("Unexpected AI Debugger response shape.");
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(rawText);
+        } catch (e) {
+          appendConsoleError("AI Debugger JSON parse failed: " + String(e));
+          if (statusEl) {
+            statusEl.textContent = "AI Debugger returned non-JSON output.";
+            statusEl.className = "small-note danger";
+          }
+          if (explanationEl) {
+            explanationEl.textContent = "Raw AI output:\n" + rawText;
+          }
+          return;
+        }
+
+        const mode = parsed.mode || "";
+        const issuesSummary = parsed.issuesSummary || "";
+        const details = Array.isArray(parsed.details) ? parsed.details : [];
+        const newIndexHtml = parsed.newIndexHtml || "";
+        const externalHelpPrompt = parsed.externalHelpPrompt || "";
+
+        let explanationLines = [];
+        if (issuesSummary) {
+          explanationLines.push("Summary: " + issuesSummary);
+        }
+        if (details.length) {
+          explanationLines.push("");
+          explanationLines.push("Details:");
+          details.forEach((d, idx) => {
+            explanationLines.push(
+              "- [" + (idx+1) + "] Issue: " + (d.issue || "") +
+              "\n    Likely cause: " + (d.likelyCause || "") +
+              "\n    Fix: " + (d.fix || "") +
+              "\n    Area: " + (d.changedArea || "")
+            );
+          });
+        }
+        if (explanationEl) {
+          explanationEl.textContent = explanationLines.join("\n");
+        }
+
+        if (mode === "replacement_index" && newIndexHtml) {
+          if (replacementEl) {
+            replacementEl.value = newIndexHtml;
+          }
+          if (statusEl) {
+            statusEl.textContent = "AI Debugger produced a replacement index.html. Review and paste into your editor if you are happy.";
+            statusEl.className = "small-note";
+          }
+        } else if (mode === "external_help" && externalHelpPrompt) {
+          if (replacementEl) {
+            replacementEl.value = externalHelpPrompt;
+          }
+          if (statusEl) {
+            statusEl.textContent = "AI Debugger suggests further investigation outside this file. Copy the text above into ChatGPT.";
+            statusEl.className = "small-note";
+          }
+        } else {
+          if (statusEl) {
+            statusEl.textContent = "AI Debugger response did not include a valid mode/newIndexHtml or externalHelpPrompt.";
+            statusEl.className = "small-note danger";
+          }
+        }
+      } catch (e) {
+        appendConsoleError("AI Debugger exception: " + String(e));
+        if (statusEl) {
+          statusEl.textContent = "AI Debugger failed: " + (e.message || String(e));
+          statusEl.className = "small-note danger";
+        }
+      }
+    }
+
     // =========
     // INIT
     // =========
     window.addEventListener("DOMContentLoaded", () => {
       logDebug("DOM loaded.");
-
-      
 
       document.getElementById("signinBtn").addEventListener("click", signInManual);
       document.getElementById("processBtn").addEventListener("click", handleProcessMeeting);
@@ -1256,6 +1553,12 @@
       document.getElementById("saveApiKeyBtn").addEventListener("click", handleSaveApiKey);
       document.getElementById("clearApiKeyBtn").addEventListener("click", handleClearApiKey);
       refreshApiKeyStatus();
+
+      // AI Debugger button
+      const runAiDebugBtn = document.getElementById("runAiDebugBtn");
+      if (runAiDebugBtn) {
+        runAiDebugBtn.addEventListener("click", handleRunAiDebug);
+      }
 
       setStatus("Waiting for sign-in…", false);
 
