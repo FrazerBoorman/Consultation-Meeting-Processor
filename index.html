@@ -269,7 +269,7 @@
         <div>
           <h1>
             Consultation Meeting Processor
-            <span class="version">v0.7</span>
+            <span class="version">v0.8</span>
           </h1>
           <div class="muted">
             Pick a consultation event, upload the audio or a text transcript, get a transcript, structured summary,
@@ -298,6 +298,31 @@
             </div>
           </div>
         </div>
+
+        <!-- Hidden date selection panel (advanced) -->
+        <details class="debug" style="margin-top:8px;">
+          <summary>Advanced date range (override last 14 days)</summary>
+          <div class="small-note" style="margin-top:4px;">
+            By default the tool loads events from the last 14 days plus today. Override the date range here if needed.
+          </div>
+          <div class="grid" style="margin-top:6px;max-width:520px;">
+            <div>
+              <label for="startDateInput">Start date</label>
+              <input id="startDateInput" type="date" />
+            </div>
+            <div>
+              <label for="endDateInput">End date</label>
+              <input id="endDateInput" type="date" />
+            </div>
+          </div>
+          <div class="btn-row" style="margin-top:6px;">
+            <button type="button" id="applyDateRangeBtn">Apply date range</button>
+            <button type="button" id="clearDateRangeBtn">Clear override</button>
+          </div>
+          <div class="small-note">
+            Both dates required. Clear override to return to the automatic last-14-days window.
+          </div>
+        </details>
       </div>
 
       <!-- STEP 2 – Audio upload + processing -->
@@ -499,6 +524,7 @@
     let lastProductSelection = null;
     let lastProposalText = "";
     let browserErrorLog = [];
+    let customDateRange = { start: null, end: null }; // optional override for event date window
 
     // ==============
     // DEBUG LOGGER
@@ -597,11 +623,23 @@
       const calId = (document.getElementById("calendarId").value || "primary").trim();
 
       const now = new Date();
-      const end = new Date(now);
-      end.setHours(23,59,59,999);
-      const start = new Date(now);
-      start.setDate(start.getDate() - 14);
-      start.setHours(0,0,0,0);
+      let start;
+      let end;
+
+      if (customDateRange.start && customDateRange.end) {
+        start = new Date(customDateRange.start);
+        start.setHours(0,0,0,0);
+        end = new Date(customDateRange.end);
+        end.setHours(23,59,59,999);
+        logDebug("Using custom date range: " + start.toISOString().slice(0,10) + " to " + end.toISOString().slice(0,10));
+      } else {
+        end = new Date(now);
+        end.setHours(23,59,59,999);
+        start = new Date(now);
+        start.setDate(start.getDate() - 14);
+        start.setHours(0,0,0,0);
+        logDebug("Using default date range: last 14 days + today.");
+      }
 
       const url = new URL(
         "https://www.googleapis.com/calendar/v3/calendars/" +
@@ -639,9 +677,9 @@
       if (!currentEvents.length) {
         const opt = document.createElement("option");
         opt.value = "";
-        opt.textContent = "No events in last 14 days.";
+        opt.textContent = "No events in selected window.";
         sel.appendChild(opt);
-        setStatus("No recent events found.", false);
+        setStatus("No events found for this date range.", false);
         return;
       }
 
@@ -1506,6 +1544,43 @@
       const runAiDebuggerBtn = document.getElementById("runAiDebuggerBtn");
       if (runAiDebuggerBtn) {
         runAiDebuggerBtn.addEventListener("click", handleRunAiDebugger);
+      }
+
+      // Date range advanced panel handlers
+      const applyDateBtn = document.getElementById("applyDateRangeBtn");
+      const clearDateBtn = document.getElementById("clearDateRangeBtn");
+      if (applyDateBtn && clearDateBtn) {
+        applyDateBtn.addEventListener("click", () => {
+          const startInput = document.getElementById("startDateInput");
+          const endInput = document.getElementById("endDateInput");
+          const startVal = startInput && startInput.value;
+          const endVal = endInput && endInput.value;
+
+          if (!startVal || !endVal) {
+            setStatus("Both start and end dates are required for a custom range.", true);
+            return;
+          }
+          if (new Date(startVal) > new Date(endVal)) {
+            setStatus("Start date cannot be after end date.", true);
+            return;
+          }
+
+          customDateRange.start = startVal;
+          customDateRange.end = endVal;
+          logDebug("Custom date range set via UI.");
+          loadRecentEvents();
+        });
+
+        clearDateBtn.addEventListener("click", () => {
+          const startInput = document.getElementById("startDateInput");
+          const endInput = document.getElementById("endDateInput");
+          if (startInput) startInput.value = "";
+          if (endInput) endInput.value = "";
+          customDateRange.start = null;
+          customDateRange.end = null;
+          logDebug("Custom date range cleared; reverting to default window.");
+          loadRecentEvents();
+        });
       }
 
       // API key handlers
