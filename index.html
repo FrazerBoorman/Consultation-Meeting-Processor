@@ -1,17 +1,14 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!doctype html><html lang="en"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Consultation Meeting Processor</title>
-  <meta name="color-scheme" content="light dark" />
+  <meta name="color-scheme" content="light dark">
   <!-- Google OAuth client ID (same as other tools) -->
-  <meta name="google-oauth-client-id"
-        content="105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com" />
+  <meta name="google-oauth-client-id" content="105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com">
   <!-- SheetJS for Excel reading/writing – primary CDN -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <!-- Google Identity Services -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://accounts.google.com/gsi/client" async="" defer=""></script>
 
   <style>
     :root {
@@ -261,7 +258,7 @@
       color:var(--muted);
     }
   </style>
-</head>
+<style id="googleidentityservice_button_styles">.qJTHM{-moz-user-select:none;-webkit-user-select:none;-ms-user-select:none;color:#202124;direction:ltr;-webkit-touch-callout:none;font-family:"Roboto-Regular",arial,sans-serif;-webkit-font-smoothing:antialiased;font-weight:400;margin:0;overflow:hidden;-webkit-text-size-adjust:100%}.ynRLnc{left:-9999px;position:absolute;top:-9999px}.L6cTce{display:none}.bltWBb{overflow-wrap:break-word;word-break:break-word}.hSRGPd{color:#1a73e8;cursor:pointer;font-weight:500;text-decoration:none}.Bz112c-W3lGp{height:16px;width:16px}.Bz112c-E3DyYd{height:20px;width:20px}.Bz112c-r9oPif{height:24px;width:24px}.Bz112c-u2z5K{height:36px;width:36px}.Bz112c-uaxL4e{border-radius:10px}.LgbsSe-Bz112c{display:block}.S9gUrf-YoZ4jf{border:none;margin:0;padding:0}.S9gUrf-YoZ4jf *{border:none;margin:0;padding:0}.fFW7wc-ibnC6b>.aZ2wEe>div{border-color:#4285f4}.P1ekSe-ZMv3u{-webkit-transition:height linear .2s;transition:height linear .2s}.P1ekSe-ZMv3u>div:nth-child(1){background-color:#1a73e8!important;-webkit-transition:width linear .3s;transition:width linear .3s}.P1ekSe-ZMv3u>div:nth-child(2){background-image:-webkit-gradient(linear,left top,right top,from(rgba(255,255,255,.7)),to(rgba(255,255,255,.7))),-webkit-gradient(linear,left top,right top,from(#1a73e8),to(#1a73e8))!important;background-image:-webkit-linear-gradient(left,rgba(255,255,255,.7),rgba(255,255,255,.7)),-webkit-linear-gradient(left,#1a73e8,#1a73e8)!important;background-image:linear-gradient(to right,rgba(255,255,255,.7),rgba(255,255,255,.7)),linear-gradient(to right,#1a73e8,#1a73e8)!important}.P1ekSe-ZMv3u>div:nth-child(3){background-image:-webkit-gradient(linear,left top,right top,from(rgba(255,255,255,.7)),to(rgba(255,255,255,.7))),-webkit-gradient(linear,left top,right top,from(#1a73e8),to(#1a73e8))!important;background-image:-webkit-linear-gradient(left,rgba(255,255,255,.7),rgba(255,255,255,.7)),-webkit-linear-gradient(left,#1a73e8,#1a73e8)!important;background-image:linear-gradient(to right,rgba(255,255,255,.7),rgba(255,255,255,.7)),linear-gradient(to right,#1a73e8,#1a73e8)!important}.haAclf{display:inline-block}.nsm7Bb-HzV7m-LgbsSe{border-radius:4px;box-sizing:border-box;-webkit-transition:background-color .218s,border-color .218s;transition:background-color .218s,border-color .218s;-moz-user-select:none;-webkit-user-select:none;-ms-user-select:none;-webkit-appearance:none;background-color:#fff;background-image:none;border:1px solid #dadce0;color:#3c4043;cursor:pointer;font-family:"Google Sans",arial,sans-serif;font-size:14px;height:40px;letter-spacing:.25px;outline:none;overflow:hidden;padding:0 12px;position:relative;text-align:center;vertical-align:middle;white-space:nowrap;width:auto}@media screen and (-ms-high-contrast:active){.nsm7Bb-HzV7m-LgbsSe{border:2px solid windowText;color:windowText}}@media screen and (preferes-contrast:more){.nsm7Bb-HzV7m-LgbsSe{color:#000}}.nsm7Bb-HzV7m-LgbsSe.pSzOP-SxQuSe{font-size:14px;height:32px;letter-spacing:.25px;padding:0 10px}.nsm7Bb-HzV7m-LgbsSe.purZT-SxQuSe{font-size:11px;height:20px;letter-spacing:.3px;padding:0 8px}.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe{padding:0;width:40px}.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe.pSzOP-SxQuSe{width:32px}.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe.purZT-SxQuSe{width:20px}.nsm7Bb-HzV7m-LgbsSe.JGcpL-RbRzK{border-radius:20px}.nsm7Bb-HzV7m-LgbsSe.JGcpL-RbRzK.pSzOP-SxQuSe{border-radius:16px}.nsm7Bb-HzV7m-LgbsSe.JGcpL-RbRzK.purZT-SxQuSe{border-radius:10px}.nsm7Bb-HzV7m-LgbsSe.MFS4be-Ia7Qfc{border:none;color:#fff}.nsm7Bb-HzV7m-LgbsSe.MFS4be-v3pZbf-Ia7Qfc{background-color:#1a73e8}.nsm7Bb-HzV7m-LgbsSe.MFS4be-JaPV2b-Ia7Qfc{background-color:#202124;color:#e8eaed}@media screen and (prefers-contrast:more){.nsm7Bb-HzV7m-LgbsSe.MFS4be-JaPV2b-Ia7Qfc{color:#fff}}.nsm7Bb-HzV7m-LgbsSe .nsm7Bb-HzV7m-LgbsSe-Bz112c{height:18px;margin-right:8px;min-width:18px;width:18px}.nsm7Bb-HzV7m-LgbsSe.pSzOP-SxQuSe .nsm7Bb-HzV7m-LgbsSe-Bz112c{height:14px;min-width:14px;width:14px}.nsm7Bb-HzV7m-LgbsSe.purZT-SxQuSe .nsm7Bb-HzV7m-LgbsSe-Bz112c{height:10px;min-width:10px;width:10px}.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-Bz112c{margin-left:8px;margin-right:-4px}.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe .nsm7Bb-HzV7m-LgbsSe-Bz112c{margin:0;padding:10px}.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe.pSzOP-SxQuSe .nsm7Bb-HzV7m-LgbsSe-Bz112c{padding:8px}.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe.purZT-SxQuSe .nsm7Bb-HzV7m-LgbsSe-Bz112c{padding:4px}.nsm7Bb-HzV7m-LgbsSe .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{border-top-left-radius:3px;border-bottom-left-radius:3px;display:-webkit-box;display:-webkit-flex;display:flex;-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;-webkit-box-align:center;-webkit-align-items:center;align-items:center;background-color:#fff;height:36px;margin-left:-10px;margin-right:12px;min-width:36px;width:36px}.nsm7Bb-HzV7m-LgbsSe .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf .nsm7Bb-HzV7m-LgbsSe-Bz112c,.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf .nsm7Bb-HzV7m-LgbsSe-Bz112c{margin:0;padding:0}.nsm7Bb-HzV7m-LgbsSe.pSzOP-SxQuSe .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{height:28px;margin-left:-8px;margin-right:10px;min-width:28px;width:28px}.nsm7Bb-HzV7m-LgbsSe.purZT-SxQuSe .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{height:16px;margin-left:-6px;margin-right:8px;min-width:16px;width:16px}.nsm7Bb-HzV7m-LgbsSe.Bz112c-LgbsSe .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{border-radius:3px;margin-left:2px;margin-right:0;padding:0}.nsm7Bb-HzV7m-LgbsSe.JGcpL-RbRzK .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{border-radius:18px}.nsm7Bb-HzV7m-LgbsSe.pSzOP-SxQuSe.JGcpL-RbRzK .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{border-radius:14px}.nsm7Bb-HzV7m-LgbsSe.purZT-SxQuSe.JGcpL-RbRzK .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{border-radius:8px}.nsm7Bb-HzV7m-LgbsSe .nsm7Bb-HzV7m-LgbsSe-bN97Pc-sM5MNb{display:-webkit-box;display:-webkit-flex;display:flex;-webkit-align-items:center;-webkit-box-align:center;align-items:center;-webkit-flex-direction:row;-webkit-box-orient:horizontal;-webkit-box-direction:normal;flex-direction:row;-webkit-box-pack:justify;-webkit-justify-content:space-between;justify-content:space-between;-webkit-flex-wrap:nowrap;flex-wrap:nowrap;height:100%;position:relative;width:100%}.nsm7Bb-HzV7m-LgbsSe .oXtfBe-l4eHX{-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center}.nsm7Bb-HzV7m-LgbsSe .nsm7Bb-HzV7m-LgbsSe-BPrWId{-webkit-flex-grow:1;-webkit-box-flex:1;flex-grow:1;font-family:"Google Sans",arial,sans-serif;font-weight:500;overflow:hidden;text-overflow:ellipsis;vertical-align:top}.nsm7Bb-HzV7m-LgbsSe.purZT-SxQuSe .nsm7Bb-HzV7m-LgbsSe-BPrWId{font-weight:300}.nsm7Bb-HzV7m-LgbsSe .oXtfBe-l4eHX .nsm7Bb-HzV7m-LgbsSe-BPrWId{-webkit-flex-grow:0;-webkit-box-flex:0;flex-grow:0}.nsm7Bb-HzV7m-LgbsSe .nsm7Bb-HzV7m-LgbsSe-MJoBVe{-webkit-transition:background-color .218s;transition:background-color .218s;bottom:0;left:0;position:absolute;right:0;top:0}.nsm7Bb-HzV7m-LgbsSe:hover,.nsm7Bb-HzV7m-LgbsSe:focus{box-shadow:none;border-color:rgb(210,227,252);outline:none}.nsm7Bb-HzV7m-LgbsSe:focus-within{outline:2px solid #00639b;border-color:transparent}.nsm7Bb-HzV7m-LgbsSe:hover .nsm7Bb-HzV7m-LgbsSe-MJoBVe{background:rgba(66,133,244,.08)}.nsm7Bb-HzV7m-LgbsSe:active .nsm7Bb-HzV7m-LgbsSe-MJoBVe,.nsm7Bb-HzV7m-LgbsSe:focus .nsm7Bb-HzV7m-LgbsSe-MJoBVe{background:rgba(66,133,244,.1)}.nsm7Bb-HzV7m-LgbsSe.MFS4be-Ia7Qfc:hover .nsm7Bb-HzV7m-LgbsSe-MJoBVe{background:rgba(255,255,255,.24)}.nsm7Bb-HzV7m-LgbsSe.MFS4be-Ia7Qfc:active .nsm7Bb-HzV7m-LgbsSe-MJoBVe,.nsm7Bb-HzV7m-LgbsSe.MFS4be-Ia7Qfc:focus .nsm7Bb-HzV7m-LgbsSe-MJoBVe{background:rgba(255,255,255,.32)}.nsm7Bb-HzV7m-LgbsSe .n1UuX-DkfjY{border-radius:50%;display:-webkit-box;display:-webkit-flex;display:flex;height:20px;margin-left:-4px;margin-right:8px;min-width:20px;width:20px}.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-BPrWId{font-family:"Roboto";font-size:12px;text-align:left}.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-BPrWId .ssJRIf,.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-BPrWId .K4efff .fmcmS{overflow:hidden;text-overflow:ellipsis}.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-BPrWId .K4efff{display:-webkit-box;display:-webkit-flex;display:flex;-webkit-align-items:center;-webkit-box-align:center;align-items:center;color:#5f6368;fill:#5f6368;font-size:11px;font-weight:400}.nsm7Bb-HzV7m-LgbsSe.jVeSEe.MFS4be-Ia7Qfc .nsm7Bb-HzV7m-LgbsSe-BPrWId .K4efff{color:#e8eaed;fill:#e8eaed}@media screen and (prefers-contrast:more){.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-BPrWId .K4efff,.nsm7Bb-HzV7m-LgbsSe.jVeSEe.MFS4be-Ia7Qfc .nsm7Bb-HzV7m-LgbsSe-BPrWId .K4efff{color:#000;fill:#000}}.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-BPrWId .K4efff .Bz112c{height:18px;margin:-3px -3px -3px 2px;min-width:18px;width:18px}.nsm7Bb-HzV7m-LgbsSe.jVeSEe .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{border-top-left-radius:0;border-bottom-left-radius:0;border-top-right-radius:3px;border-bottom-right-radius:3px;margin-left:12px;margin-right:-10px}.nsm7Bb-HzV7m-LgbsSe.jVeSEe.JGcpL-RbRzK .nsm7Bb-HzV7m-LgbsSe-Bz112c-haAclf{border-radius:18px}.L5Fo6c-sM5MNb{border:0;display:block;left:0;position:relative;top:0}.L5Fo6c-bF1uUb{border-radius:4px;bottom:0;cursor:pointer;left:0;position:absolute;right:0;top:0}.L5Fo6c-bF1uUb:focus{border:none;outline:none}sentinel{}</style></head>
 <body>
   <div class="wrap">
     <div class="card">
@@ -285,8 +282,7 @@
         <div class="grid">
           <div>
             <label for="calendarId">Calendar ID</label>
-            <input id="calendarId"
-              value="bb14db72acb2ffd4230316960d02103fa66e54901522ff7b8113eec682f6d42e@group.calendar.google.com" />
+            <input id="calendarId" value="bb14db72acb2ffd4230316960d02103fa66e54901522ff7b8113eec682f6d42e@group.calendar.google.com">
             <div class="small-note">
               Same calendar you use in the other tools.
             </div>
@@ -296,8 +292,8 @@
             <select id="eventSelect">
               <option value="">Sign in to load events…</option>
             </select>
-            <div id="status">Status: Waiting for sign-in…</div>
-            <div id="aiStatus"></div>
+            <div id="status" class="">Status: Waiting for sign-in…</div>
+            <div id="aiStatus" class="">Running AI Debugger…</div>
           </div>
           <div style="align-self:end;">
             <button id="signinBtn" class="primary" type="button">Sign into Google</button>
@@ -314,7 +310,7 @@
         <div class="grid">
           <div>
             <label for="audioFile">Consultation audio / text file</label>
-            <input id="audioFile" type="file" accept="audio/*,.m4a,audio/mp4,audio/x-m4a,text/plain" />
+            <input id="audioFile" type="file" accept="audio/*,text/plain">
             <div class="small-note">
               Export from DJI Mic / Voice Memos first, or upload a .txt transcript. File only goes to OpenAI when transcribing.
               Whisper supports files up to ~25 MB per request; larger recordings will be split into chunks automatically.
@@ -372,7 +368,7 @@
         <div class="grid">
           <div>
             <label for="templateFile">Upload template spreadsheet (with “Products” sheet)</label>
-            <input id="templateFile" type="file" accept=".xlsx,.xlsm,.xls" />
+            <input id="templateFile" type="file" accept=".xlsx,.xlsm,.xls">
             <div class="small-note">
               This should be your master template. The tool reads the <strong>Products</strong> sheet,
               then writes selected rows into a new <strong>AutoSelected</strong> sheet rather than touching your formulas.
@@ -401,7 +397,7 @@
         <div class="grid">
           <div>
             <label for="pricedFile">Upload edited/priced spreadsheet</label>
-            <input id="pricedFile" type="file" accept=".xlsx,.xlsm,.xls" />
+            <input id="pricedFile" type="file" accept=".xlsx,.xlsm,.xls">
             <div class="small-note">
               Use the template you’ve filled with prices, labour, totals etc.
               The tool will read the <strong>Clean</strong> sheet if present, otherwise the first sheet.
@@ -432,24 +428,34 @@
         <button type="button" id="saveApiKeyBtn">Save</button>
         <button type="button" id="clearApiKeyBtn">Forget</button>
       </div>
-      <div id="apiKeyStatus" class="small-note"></div>
+      <div id="apiKeyStatus" class="small-note">API key is stored in this browser.</div>
     </details>
 
     <!-- Global debug panel -->
-    <details class="debug">
+    <details class="debug" open="">
       <summary>Debug panel</summary>
-      <pre id="debugLog">(empty)</pre>
+      <pre id="debugLog">(empty)[2025-11-29 12:28:37] DOM loaded.
+[2025-11-29 12:28:38] STATUS: Waiting for sign-in…
+[2025-11-29 12:28:38] Google auth library not ready yet.
+[2025-11-29 12:29:03] AI: Uploading and transcribing / reading…
+[2025-11-29 12:29:03] Processing file: New Recording 22.m4a (audio/x-m4a, 2978188 bytes)
+[2025-11-29 12:29:03] Audio file size 2.8 MB – single Whisper call.
+[2025-11-29 12:29:03] Sending audio chunk 1/1 to OpenAI whisper…
+[2025-11-29 12:29:07] AI: Audio transcription error (chunk 1/1) 400: {"error":{"message":"Invalid file format. Supported formats: ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']","type":"invalid_request_error","param":null,"code":null},"usage":{"type":"duration","seconds":0}}
+[2025-11-29 12:29:30] AI: Running AI Debugger…
+[2025-11-29 12:29:30] AI Debugger invoked.
+</pre>
     </details>
 
     <!-- AI Debugger panel -->
-    <details class="debug">
+    <details class="debug" open="">
       <summary>AI Debugger (Be Strict)</summary>
       <div class="small-note" style="margin-top:4px;">
         Sends the full current index.html, internal debug log, structured AI JSON, and captured browser errors to the 5.1 model.
         It will either propose a minimal code fix with a full replacement index, or explain why the issue is external.
       </div>
       <div style="margin-top:6px;">
-        <button type="button" id="runAiDebuggerBtn">Run AI Debugger (index + debug log)</button>
+        <button type="button" id="runAiDebuggerBtn" disabled="">Run AI Debugger (index + debug log)</button>
       </div>
       <div class="small-note" style="margin-top:6px;">
         Optional: paste any extra console messages here if you’ve copied them from DevTools:
@@ -668,7 +674,25 @@
 
     async function transcribeAudioChunk(blob, apiKey, partIndex, totalParts) {
       const formData = new FormData();
-      formData.append("file", blob, "chunk-" + partIndex + ".mp3");
+      // Normalise MIME type for Whisper: some browsers use audio/x-m4a which can be rejected.
+      let uploadBlob = blob;
+      try {
+        const originalType = blob.type || "";
+        let forcedType = originalType;
+        if (!originalType && typeof Blob !== "undefined") {
+          // Leave as-is if we have no type at all.
+          forcedType = "";
+        } else if (/x-m4a$/i.test(originalType)) {
+          // Normalise audio/x-m4a to audio/m4a which Whisper explicitly supports.
+          forcedType = "audio/m4a";
+        }
+        if (forcedType && forcedType !== originalType && typeof Blob !== "undefined") {
+          uploadBlob = new Blob([blob], { type: forcedType });
+        }
+      } catch (e) {
+        // If anything goes wrong, fall back to the original blob.
+      }
+      formData.append("file", uploadBlob, "chunk-" + partIndex + ".m4a");
       formData.append("model", AUDIO_MODEL);
       formData.append("response_format","json");
 
@@ -960,7 +984,7 @@
           "- Add a short notes field with key details (e.g. 'Combi JTS RX – 1 HH + 1 belt-pack', 'White finish', 'Left wall mount', etc.).\n\n" +
           "Rules:\n" +
           "- Do NOT invent product names not present in the products table.\n" +
-          "- You mayChoose multiple products for a single need if sensible (e.g. projector + mount + wallplate).\n" +
+          "- You may choose multiple products for a single need if sensible (e.g. projector + mount + wallplate).\n" +
           "- If the products sheet has a column that clearly indicates its natural checklist (e.g. 'Category'), use it.\n" +
           "- If multiple products fit, choose the most likely / standard option.\n\n" +
           "Return STRICT JSON ONLY in this format:\n" +
@@ -1297,7 +1321,7 @@
       "    }\\n" +
       "  ],\\n" +
       '  \"replacementIndexHtml\": \"Full index.html with your fixes applied, or an empty string if no code changes are needed.\",\\n' +
-      '  \"chatgptPrompt\": \"If outcome is external_issue, write a prompt the user can paste into ChatGPT to get further help. Otherwise empty string.\"\\n" +
+      '  \"chatgptPrompt\": \"If outcome is external_issue, write a prompt the user can paste into ChatGPT to get further help. Otherwise empty string.\"\\n' +
       "}\\n" +
       "If you believe the issue cannot be solved by changing index.html (for example: account or quota issues, missing model access, or third-party service outages), set outcome to \\\"external_issue\\\" and do NOT propose code changes.";
 
@@ -1512,5 +1536,6 @@
       }, 0);
     });
   </script>
-</body>
-</html>
+
+
+</body></html>
