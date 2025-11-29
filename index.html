@@ -269,7 +269,7 @@
         <div>
           <h1>
             Consultation Meeting Processor
-            <span class="version">v0.6</span>
+            <span class="version">v0.7</span>
           </h1>
           <div class="muted">
             Pick a consultation event, upload the audio or a text transcript, get a transcript, structured summary,
@@ -283,14 +283,6 @@
       <div class="section">
         <div class="section-title">Step 1 – Select consultation from Google Calendar</div>
         <div class="grid">
-          <div>
-            <label for="calendarId">Calendar ID</label>
-            <input id="calendarId"
-              value="bb14db72acb2ffd4230316960d02103fa66e54901522ff7b8113eec682f6d42e@group.calendar.google.com" />
-            <div class="small-note">
-              Same calendar you use in the other tools.
-            </div>
-          </div>
           <div>
             <label for="eventSelect">Recent events (last 14 days + today)</label>
             <select id="eventSelect">
@@ -469,6 +461,22 @@
         If the issue is external, this area will contain a prompt you can paste into ChatGPT for deeper help.
       </div>
       <pre id="replacementIndexOutput">(none yet)</pre>
+    </details>
+
+    <!-- Calendar / advanced settings -->
+    <details class="debug">
+      <summary>Calendar / advanced (Calendar ID)</summary>
+      <div class="small-note" style="margin-top:4px;">
+        Usually this is your shared AVD consultations calendar. Same one you use in the other tools.
+      </div>
+      <div style="margin-top:6px;max-width:480px;">
+        <label for="calendarId">Calendar ID</label>
+        <input id="calendarId"
+          value="bb14db72acb2ffd4230316960d02103fa66e54901522ff7b8113eec682f6d42e@group.calendar.google.com" />
+        <div class="small-note">
+          Change only if you know what you’re doing. The tool will use this for loading recent events.
+        </div>
+      </div>
     </details>
   </div>
 
@@ -671,7 +679,7 @@
       formData.append("file", blob, "chunk-" + partIndex + ".mp3");
       formData.append("model", AUDIO_MODEL);
       formData.append("response_format","json");
-      formData.append("language","en"); // Force English transcription
+      formData.append("language","en"); // force English transcription
 
       logDebug("Sending audio chunk " + partIndex + "/" + totalParts + " to OpenAI whisper…");
 
@@ -1401,7 +1409,7 @@
           });
         }
 
-        if (outEl) outText ? outEl.textContent = outText : outEl.textContent = "(no details provided by AI Debugger)";
+        if (outEl) outEl.textContent = outText || "(no details provided by AI Debugger)";
 
         if (replEl) {
           if (outcome === "code_fix" && replacementIndexHtml) {
