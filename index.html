@@ -284,14 +284,6 @@
         <div class="section-title">Step 1 – Select consultation from Google Calendar</div>
         <div class="grid">
           <div>
-            <label for="calendarId">Calendar ID</label>
-            <input id="calendarId"
-              value="bb14db72acb2ffd4230316960d02103fa66e54901522ff7b8113eec682f6d42e@group.calendar.google.com" />
-            <div class="small-note">
-              Same calendar you use in the other tools.
-            </div>
-          </div>
-          <div>
             <label for="eventSelect">Recent events (last 14 days + today)</label>
             <select id="eventSelect">
               <option value="">Sign in to load events…</option>
@@ -433,6 +425,22 @@
         <button type="button" id="clearApiKeyBtn">Forget</button>
       </div>
       <div id="apiKeyStatus" class="small-note"></div>
+    </details>
+
+    <!-- CALENDAR SETTINGS PANEL -->
+    <details class="debug">
+      <summary>Advanced settings (Calendar ID)</summary>
+      <div class="small-note" style="margin-top:4px;">
+        Change the Google Calendar this tool reads events from. Normally you can leave this as-is and just sign in.
+      </div>
+      <div style="margin-top:6px;max-width:420px;">
+        <label for="calendarId">Calendar ID</label>
+        <input id="calendarId"
+          value="bb14db72acb2ffd4230316960d02103fa66e54901522ff7b8113eec682f6d42e@group.calendar.google.com" />
+        <div class="small-note">
+          Same calendar you use in the other tools.
+        </div>
+      </div>
     </details>
 
     <!-- Global debug panel -->
