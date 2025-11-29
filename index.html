@@ -314,7 +314,7 @@
         <div class="grid">
           <div>
             <label for="audioFile">Consultation audio / text file</label>
-            <input id="audioFile" type="file" accept="audio/*,text/plain" />
+            <input id="audioFile" type="file" accept="audio/*,.m4a,audio/mp4,audio/x-m4a,text/plain" />
             <div class="small-note">
               Export from DJI Mic / Voice Memos first, or upload a .txt transcript. File only goes to OpenAI when transcribing.
               Whisper supports files up to ~25 MB per request; larger recordings will be split into chunks automatically.
@@ -960,7 +960,7 @@
           "- Add a short notes field with key details (e.g. 'Combi JTS RX – 1 HH + 1 belt-pack', 'White finish', 'Left wall mount', etc.).\n\n" +
           "Rules:\n" +
           "- Do NOT invent product names not present in the products table.\n" +
-          "- You may choose multiple products for a single need if sensible (e.g. projector + mount + wallplate).\n" +
+          "- You mayChoose multiple products for a single need if sensible (e.g. projector + mount + wallplate).\n" +
           "- If the products sheet has a column that clearly indicates its natural checklist (e.g. 'Category'), use it.\n" +
           "- If multiple products fit, choose the most likely / standard option.\n\n" +
           "Return STRICT JSON ONLY in this format:\n" +
@@ -1297,7 +1297,7 @@
       "    }\\n" +
       "  ],\\n" +
       '  \"replacementIndexHtml\": \"Full index.html with your fixes applied, or an empty string if no code changes are needed.\",\\n' +
-      '  \"chatgptPrompt\": \"If outcome is external_issue, write a prompt the user can paste into ChatGPT to get further help. Otherwise empty string.\"\\n' +
+      '  \"chatgptPrompt\": \"If outcome is external_issue, write a prompt the user can paste into ChatGPT to get further help. Otherwise empty string.\"\\n" +
       "}\\n" +
       "If you believe the issue cannot be solved by changing index.html (for example: account or quota issues, missing model access, or third-party service outages), set outcome to \\\"external_issue\\\" and do NOT propose code changes.";
 
