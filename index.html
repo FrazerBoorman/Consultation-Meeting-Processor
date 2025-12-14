@@ -273,7 +273,7 @@
           </h1>
           <div class="muted">
             Pick a consultation event, upload the audio or a text transcript, get a transcript, structured summary,
-            suggested kit from your spreadsheet template, and a proposal draft.
+            suggested kit into your spreadsheet template, and a proposal draft.
           </div>
         </div>
         <a href="https://frazerboorman.github.io/" class="pill">Frazer · AVD TOOLS</a>
@@ -385,32 +385,30 @@
 
       <!-- STEP 3 – Spreadsheet template / product suggestions -->
       <div class="section">
-        <div class="section-title">Step 3 – Suggest products from template spreadsheet</div>
+        <div class="section-title">Step 3 – Populate your template spreadsheet (Guided + Products → Checklists)</div>
         <div class="grid">
           <div>
-            <label for="templateFile">Upload template spreadsheet (with “Products” sheet)</label>
+            <label for="templateFile">Upload template spreadsheet (Guided, Checklists, Products)</label>
             <input id="templateFile" type="file" accept=".xlsx,.xlsm,.xls" />
-            <div class="small-note">
-              This should be your master template. The tool reads the <strong>Products</strong> sheet,
-              then writes selected rows into a new <strong>AutoSelected</strong> sheet rather than touching your formulas.
-            </div>
-            <div class="small-note" id="productsRangeInfo" style="margin-top:6px;">
-              Products range: (not read yet)
+            <div class="small-note" id="templateHint">
+              This should be your master template. The tool reads <strong>Guided</strong> + <strong>Products</strong>,
+              then writes directly into <strong>Checklists</strong> (keeping your formulas intact).
             </div>
           </div>
         </div>
 
         <div class="btn-row">
-          <button id="generateProductsBtn" type="button">Generate product checklist (from summary + Products sheet)</button>
-          <button id="downloadFilledTemplateBtn" type="button">Download workbook with AutoSelected</button>
+          <button id="generateProductsBtn" type="button" class="primary">Generate & write checklist entries</button>
+          <button id="downloadFilledTemplateBtn" type="button">Download filled workbook</button>
         </div>
 
         <div class="small-note">
-          Review the suggested products before you commit. Quantities &amp; notes come from the transcript where possible.
+          Be Strict: the tool only writes product selection cells + qty cells in Checklists; it does not rewrite formulas.
+          If a product cannot be matched to your Products list, it is placed into MISC as “NEEDS SOURCING” (no made-up prices/links).
         </div>
 
         <div style="margin-top:10px;">
-          <label>Suggested products (preview)</label>
+          <label>What was written (preview)</label>
           <div id="productsTableWrapper">No products suggested yet.</div>
         </div>
       </div>
@@ -424,7 +422,7 @@
             <input id="pricedFile" type="file" accept=".xlsx,.xlsm,.xls" />
             <div class="small-note">
               Use the template you’ve filled with prices, labour, totals etc.
-              The tool will read the <strong>Clean</strong> sheet if present, otherwise the first sheet.
+              The tool will read the <strong>Checklists</strong> sheet if present, otherwise the first sheet.
             </div>
           </div>
         </div>
@@ -474,7 +472,7 @@
       <div class="small-note" style="margin-top:6px;">
         Problem description (what you expected vs what happened) + optional pasted console:
       </div>
-      <textarea id="consoleErrorsInput" rows="5" style="margin-top:4px;" placeholder="Example: 'Advanced date range shows no events, but I can see events next week in Google Calendar…'"></textarea>
+      <textarea id="consoleErrorsInput" rows="5" style="margin-top:4px;" placeholder="Example: 'Step 3 wrote into the wrong checklist…'"></textarea>
       <div class="small-note" style="margin-top:6px;">
         AI Debugger output (summary, reasons, and outline of changes):
       </div>
@@ -515,17 +513,45 @@
     const CLIENT_ID = "105230737516-l8tlnck4idde83pjetrotobpt8borvts.apps.googleusercontent.com";
     const SCOPES   = "https://www.googleapis.com/auth/calendar.readonly";
     const OPENAI_KEY_STORAGE = "avd_job_report_openai_key";
+
     const TEXT_MODEL = "gpt-4.1-mini";
     const AUDIO_MODEL = "whisper-1";
+
+    // Step 3 should be more "consultant brain"
+    const PRODUCT_MODEL = "gpt-5.1";
+
     const DEBUG_MODEL = "gpt-5.1";
+
+    // Spreadsheet constants (Be Strict: explicit mapping)
+    const PRODUCTS_SHEET_NAME = "Products";
+    const GUIDED_SHEET_NAME = "Guided";
+    const CHECKLISTS_SHEET_NAME = "Checklists";
+
+    // You corrected this: Products table runs A4:H500 with headers on row 3.
+    const PRODUCTS_HEADER_ROW_1BASED = 3;
+    const PRODUCTS_DATA_START_ROW_1BASED = 4;
+    const PRODUCTS_DATA_END_ROW_1BASED = 500;
+    const PRODUCTS_RANGE_A1 = "A3:H500";
+
+    // Checklists writing columns (based on your template structure)
+    // Product data-validation cell is column C, qty input is column G.
+    const CHECKLISTS_PRODUCT_COL = 3; // C
+    const CHECKLISTS_QTY_COL = 7;     // G
+
+    // MISC starts at row 277 (you said). We still detect sections by headers, but keep this as a fallback.
+    const MISC_FALLBACK_START_ROW_1BASED = 277;
 
     let tokenClient = null;
     let accessToken = null;
     let currentEvents = [];
     let lastTranscript = "";
     let lastStructuredSummary = null;
-    let lastProductSelection = null;
+
+    // workbook state for step 3
+    let lastWorkbookState = null; // { wb, products, guided, checklistRanges, writePreview }
+
     let lastProposalText = "";
+
     let browserErrorLog = [];
     let consoleLogCapture = [];
     let customDateRange = { start: null, end: null }; // optional override for event date window
@@ -545,6 +571,10 @@
       if (!maxItems || maxItems <= 0) return [];
       if (arr.length <= maxItems) return arr.slice();
       return arr.slice(arr.length - maxItems);
+    }
+
+    function normalizeStr(s) {
+      return String(s || "").trim().toLowerCase();
     }
 
     // ==============
@@ -692,9 +722,7 @@
         .map(ev => ({ ev, startDate: getEventStartDate(ev) }))
         .filter(obj => obj.startDate);
 
-      // IMPORTANT:
-      // - Default mode is "past + today": keep filtering out future events
-      // - Custom date range must allow future events (do NOT apply <= now filter)
+      // Default mode excludes future events; custom range allows future events.
       if (!usingCustomRange) {
         processed = processed.filter(obj => obj.startDate <= nowRef);
         processed.sort((a,b) => b.startDate - a.startDate);
@@ -749,15 +777,13 @@
       formData.append("file", blob, "chunk-" + partIndex + ".mp3");
       formData.append("model", AUDIO_MODEL);
       formData.append("response_format","json");
-      formData.append("language","en"); // force English transcription
+      formData.append("language","en");
 
       logDebug("Sending audio chunk " + partIndex + "/" + totalParts + " to OpenAI whisper…");
 
       const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
         method: "POST",
-        headers: {
-          "Authorization": "Bearer " + apiKey
-        },
+        headers: { "Authorization": "Bearer " + apiKey },
         body: formData
       });
       if (!res.ok) {
@@ -771,14 +797,13 @@
     async function transcribeAudio(file) {
       const apiKey = getOpenAIKeyOrThrow();
 
-      // Text file path
       if (file.type === "text/plain" || file.name.toLowerCase().endsWith(".txt")) {
         logDebug("Treating file as plain text transcript: " + file.name);
         const text = await file.text();
         return text || "";
       }
 
-      const MAX_CHUNK_BYTES = 24 * 1024 * 1024; // Keep under 25 MB Whisper limit per request
+      const MAX_CHUNK_BYTES = 24 * 1024 * 1024;
 
       if (file.size <= MAX_CHUNK_BYTES) {
         logDebug("Audio file size " + (file.size / (1024 * 1024)).toFixed(1) + " MB – single Whisper call.");
@@ -802,9 +827,7 @@
         logDebug("Preparing chunk " + partIndex + "/" + totalParts + " (" +
           ((end - start) / (1024 * 1024)).toFixed(1) + " MB).");
         const chunkText = await transcribeAudioChunk(chunk, apiKey, partIndex, totalParts);
-        if (chunkText) {
-          combinedText += (combinedText ? "\n\n" : "") + chunkText;
-        }
+        if (chunkText) combinedText += (combinedText ? "\n\n" : "") + chunkText;
       }
       return combinedText;
     }
@@ -823,25 +846,14 @@
         "Rules:\n" +
         "- Read the ENTIRE transcript before deciding what was actually agreed.\n" +
         "- If something was clearly rejected, do NOT list it as part of the final solution.\n" +
-        "- Do NOT invent any kit or decisions that are not in the transcript.\n" +
-        "- productNeeds items should be high-level roles like 'ceiling speakers for main hall', '4K projector',\n" +
-        "  'HDMI wall plate', 'wireless handheld microphone', etc.\n\n" +
+        "- Do NOT invent any kit or decisions that are not in the transcript.\n\n" +
         "Return STRICT JSON ONLY in this format:\n" +
         "{\n" +
-        '  \"summary\": \"Short paragraph summarising the meeting from the engineer’s perspective.\",\n' +
-        '  \"keyIssues\": [\"issue 1\", \"issue 2\", \"...\"],\n' +
-        '  \"currentEquipment\": [\n' +
-        '    { \"name\": \"\", \"status\": \"working | failing | unknown\", \"notes\": \"\" }\n' +
-        '  ],\n' +
-        '  \"agreedSolution\": \"Paragraph describing final agreed solution.\",\n' +
-        '  \"productNeeds\": [\n' +
-        '    {\n' +
-        '      \"categoryHint\": \"Audio | Visual | Control | Streaming | Infrastructure | Other\",\n' +
-        '      \"role\": \"e.g. ceiling speakers, projector, wall plate, amp, etc.\",\n' +
-        '      \"quantity\": 0,\n' +
-        '      \"extraNotes\": \"any constraints mentioned (e.g. white finish, left wall, balcony, etc.)\"\n' +
-        '    }\n' +
-        '  ]\n' +
+        '  "summary": "",\n' +
+        '  "keyIssues": [],\n' +
+        '  "currentEquipment": [{"name":"","status":"working|failing|unknown","notes":""}],\n' +
+        '  "agreedSolution": "",\n' +
+        '  "productNeeds": [{"categoryHint":"Audio|Visual|Control|Streaming|Infrastructure|Other","role":"","quantity":0,"extraNotes":""}]\n' +
         "}\n" +
         "No explanatory text outside the JSON.";
 
@@ -869,13 +881,7 @@
       }
       const data = await res.json();
       let rawText = "";
-      if (
-        data.output &&
-        data.output[0] &&
-        data.output[0].content &&
-        data.output[0].content[0] &&
-        data.output[0].content[0].text
-      ) {
+      if (data.output && data.output[0] && data.output[0].content && data.output[0].content[0] && data.output[0].content[0].text) {
         rawText = data.output[0].content[0].text;
       } else {
         throw new Error("Unexpected AI summary response shape.");
@@ -930,17 +936,12 @@
         const structured = await summariseTranscript(transcript, eventMeta);
         lastStructuredSummary = structured;
 
-        // Render into UI
         document.getElementById("summaryBox").innerHTML =
-          structured.summary
-            ? escapeHtml(structured.summary).replace(/\n/g,"<br>")
-            : "No summary returned.";
+          structured.summary ? escapeHtml(structured.summary).replace(/\n/g,"<br>") : "No summary returned.";
 
         if (Array.isArray(structured.keyIssues) && structured.keyIssues.length) {
           document.getElementById("issuesBox").innerHTML =
-            "<ul>" + structured.keyIssues
-              .map(i => "<li>" + escapeHtml(i) + "</li>")
-              .join("") + "</ul>";
+            "<ul>" + structured.keyIssues.map(i => "<li>" + escapeHtml(i) + "</li>").join("") + "</ul>";
         } else {
           document.getElementById("issuesBox").textContent = "No key issues extracted.";
         }
@@ -960,14 +961,11 @@
         }
 
         document.getElementById("solutionBox").innerHTML =
-          structured.agreedSolution
-            ? escapeHtml(structured.agreedSolution).replace(/\n/g,"<br>")
-            : "No final solution clearly extracted.";
+          structured.agreedSolution ? escapeHtml(structured.agreedSolution).replace(/\n/g,"<br>") : "No final solution clearly extracted.";
 
-        document.getElementById("debugJson").textContent =
-          JSON.stringify(structured, null, 2);
+        document.getElementById("debugJson").textContent = JSON.stringify(structured, null, 2);
 
-        setAiStatus("Transcript and summary ready. Review summary before product selection.", false);
+        setAiStatus("Transcript and summary ready. Review summary before Step 3.", false);
       } catch (e) {
         console.error(e);
         setAiStatus(e.message || "Error processing meeting.", true);
@@ -977,58 +975,187 @@
     }
 
     // ===========================
-    // STEP 3: PRODUCTS / TEMPLATE
+    // STEP 3: TEMPLATE → CHECKLISTS
     // ===========================
-    function listWorkbookNamedRanges(wb) {
+    function readRangeAsTable(ws, rangeA1) {
+      // returns { rows: [ [..] ], headers: [..], dataRows: [ [..] ] }
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, range: rangeA1, blankrows: false, defval: "" });
+      if (!aoa || !aoa.length) return { rows: [], headers: [], dataRows: [] };
+      const headers = aoa[0] || [];
+      const dataRows = aoa.slice(1);
+      return { rows: aoa, headers, dataRows };
+    }
+
+    function buildProductsIndex(headers, dataRows) {
+      // dataRows are A4:H500 mapped; include rowIndex in original sheet.
+      const products = [];
+      const nameColIdx = headers.findIndex(h => normalizeStr(h) === "product" || normalizeStr(h) === "name");
+      for (let i = 0; i < dataRows.length; i++) {
+        const row = dataRows[i];
+        const rowIndex1Based = PRODUCTS_DATA_START_ROW_1BASED + i;
+        const obj = { rowIndex: rowIndex1Based };
+
+        headers.forEach((h, colIdx) => {
+          if (!h) return;
+          obj[String(h)] = row[colIdx];
+        });
+
+        let n = "";
+        if (nameColIdx >= 0) n = row[nameColIdx];
+        if (!n) n = row[0]; // fallback column A
+        const norm = normalizeStr(n);
+        if (!norm) continue;
+
+        obj.__name = String(n);
+        obj.__nameNorm = norm;
+        products.push(obj);
+      }
+
+      const map = new Map();
+      products.forEach(p => {
+        if (!map.has(p.__nameNorm)) map.set(p.__nameNorm, p);
+      });
+
+      return { products, map };
+    }
+
+    function readGuidedList(ws) {
+      // Guided sheet is structured similarly; column C contains “Product List” entries.
+      // We just collect non-empty product names for the model as “frequently used kit”.
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: "" });
+      const items = [];
+      for (let r = 0; r < aoa.length; r++) {
+        const row = aoa[r];
+        const colB = row[1]; // B
+        const colC = row[2]; // C
+        const name = String(colC || "").trim();
+        if (!name) continue;
+        items.push({
+          section: String(colB || "").trim(),
+          name
+        });
+      }
+      // dedupe by name
+      const seen = new Set();
       const out = [];
-      try {
-        if (wb && wb.Workbook && Array.isArray(wb.Workbook.Names)) {
-          wb.Workbook.Names.forEach(n => {
-            if (n && n.Name && n.Ref) out.push({ name: String(n.Name), ref: String(n.Ref) });
-          });
-        }
-      } catch (e) {
-        // ignore
+      for (const it of items) {
+        const k = normalizeStr(it.name);
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(it);
       }
       return out;
     }
 
-    function getNamedRangeRef(wb, preferredNames) {
-      const names = listWorkbookNamedRanges(wb);
-      if (!names.length) return null;
-
-      const pref = Array.isArray(preferredNames) ? preferredNames : [];
-      for (const wanted of pref) {
-        const found = names.find(n => n.name.toLowerCase() === String(wanted).toLowerCase());
-        if (found) return found;
+    function detectChecklistRanges(checklistsWs) {
+      // Template has checklist headers in column B containing "CHECKLIST".
+      // We map each section to [startRow, endRow] where entries go (start is headerRow+1).
+      const aoa = XLSX.utils.sheet_to_json(checklistsWs, { header: 1, blankrows: false, defval: "" });
+      // But aoa indexes compress blanks; safer: scan actual worksheet range.
+      const ref = checklistsWs["!ref"];
+      const range = XLSX.utils.decode_range(ref);
+      const headers = [];
+      for (let r = range.s.r; r <= range.e.r; r++) {
+        const cellAddr = XLSX.utils.encode_cell({ r, c: 1 }); // column B (0-based c=1)
+        const v = (checklistsWs[cellAddr] && checklistsWs[cellAddr].v) || "";
+        const s = String(v || "");
+        if (s && s.toUpperCase().includes("CHECKLIST")) {
+          headers.push({ headerRow: r + 1, title: s.trim() }); // 1-based row
+        }
       }
-      return null;
+      headers.sort((a,b) => a.headerRow - b.headerRow);
+
+      const ranges = [];
+      for (let i = 0; i < headers.length; i++) {
+        const cur = headers[i];
+        const next = headers[i+1];
+        const startRow = cur.headerRow + 1;
+        const endRow = next ? (next.headerRow - 1) : (range.e.r + 1);
+        ranges.push({
+          title: cur.title,
+          key: normalizeStr(cur.title.replace("checklist","").trim()),
+          headerRow: cur.headerRow,
+          startRow,
+          endRow
+        });
+      }
+
+      // Fallback: ensure MISC exists
+      const misc = ranges.find(r => r.key.includes("misc"));
+      if (!misc) {
+        ranges.push({
+          title: "MISC CHECKLIST (fallback)",
+          key: "misc",
+          headerRow: MISC_FALLBACK_START_ROW_1BASED - 1,
+          startRow: MISC_FALLBACK_START_ROW_1BASED,
+          endRow: MISC_FALLBACK_START_ROW_1BASED + 50
+        });
+      }
+
+      return ranges;
     }
 
-    function normalizeRef(ref) {
-      // SheetJS names often look like: "'Products'!$A$4:$H$500"
-      // or: "Products!$A$4:$H$500"
-      // We return { sheetName, rangeA1 } or null.
-      try {
-        const s = String(ref || "").trim();
-        const bang = s.indexOf("!");
-        if (bang === -1) return null;
-        let sheetPart = s.slice(0, bang);
-        let rangePart = s.slice(bang + 1);
-
-        sheetPart = sheetPart.replace(/^'/, "").replace(/'$/, "");
-        rangePart = rangePart.replace(/^\$/, "$"); // no-op but keeps intention clear
-        rangePart = rangePart.replace(/^(\$?)([A-Z]+)(\$?)(\d+)/, "$2$4"); // not reliable; do not use
-        // Keep rangePart as-is; XLSX.decode_range handles $.
-        return { sheetName: sheetPart, rangeA1: rangePart };
-      } catch (e) {
-        return null;
-      }
+    function pickChecklistKeyFromModel(itemChecklist) {
+      const s = normalizeStr(itemChecklist);
+      if (!s) return "misc";
+      if (s.includes("audio")) return "audio";
+      if (s.includes("visual")) return "visual";
+      if (s.includes("stream")) return "streaming";
+      if (s.includes("infra")) return "infrastructure";
+      if (s.includes("control")) return "control";
+      if (s.includes("other")) return "misc";
+      if (s.includes("misc")) return "misc";
+      if (s.includes("loop")) return "loop";
+      if (s.includes("lighting")) return "lighting";
+      if (s.includes("cctv")) return "cctv";
+      if (s.includes("acoustic")) return "acoustics";
+      return "misc";
     }
 
-    function updateProductsRangeInfo(text) {
-      const el = document.getElementById("productsRangeInfo");
-      if (el) el.textContent = text;
+    function findRangeByKey(ranges, keyWanted) {
+      const k = normalizeStr(keyWanted);
+      if (!k) return null;
+      // direct includes match
+      let found = ranges.find(r => r.key === k);
+      if (found) return found;
+      found = ranges.find(r => r.key.includes(k));
+      if (found) return found;
+      return ranges.find(r => r.key.includes("misc")) || null;
+    }
+
+    function getCellValue(ws, r1, c1) {
+      const addr = XLSX.utils.encode_cell({ r: r1 - 1, c: c1 - 1 });
+      return (ws[addr] && ws[addr].v) != null ? ws[addr].v : "";
+    }
+
+    function setCellValue(ws, r1, c1, v) {
+      const addr = XLSX.utils.encode_cell({ r: r1 - 1, c: c1 - 1 });
+      ws[addr] = { t: "s", v: String(v == null ? "" : v) };
+    }
+
+    function setNumberCell(ws, r1, c1, n) {
+      const addr = XLSX.utils.encode_cell({ r: r1 - 1, c: c1 - 1 });
+      if (n === "" || n == null) {
+        ws[addr] = { t:"s", v:"" };
+        return;
+      }
+      const num = Number(n);
+      if (!isFinite(num)) {
+        ws[addr] = { t:"s", v:String(n) };
+        return;
+      }
+      ws[addr] = { t:"n", v:num };
+    }
+
+    function ensureRefCovers(ws, r1, c1) {
+      const cur = ws["!ref"] ? XLSX.utils.decode_range(ws["!ref"]) : { s:{r:0,c:0}, e:{r:0,c:0} };
+      const rr = r1 - 1;
+      const cc = c1 - 1;
+      if (rr < cur.s.r) cur.s.r = rr;
+      if (cc < cur.s.c) cur.s.c = cc;
+      if (rr > cur.e.r) cur.e.r = rr;
+      if (cc > cur.e.c) cur.e.c = cc;
+      ws["!ref"] = XLSX.utils.encode_range(cur);
     }
 
     async function handleGenerateProducts() {
@@ -1045,135 +1172,75 @@
       const fileInput = document.getElementById("templateFile");
       const file = fileInput.files && fileInput.files[0];
       if (!file) {
-        setAiStatus("Upload your template spreadsheet (with Products sheet) first.", true);
+        setAiStatus("Upload your template spreadsheet first.", true);
         return;
       }
 
-      setAiStatus("Reading template & sending to AI for product selection…", false);
+      setAiStatus("Reading template (Guided/Products/Checklists)…", false);
       document.getElementById("generateProductsBtn").disabled = true;
 
       try {
         const arrayBuffer = await file.arrayBuffer();
         const wb = XLSX.read(arrayBuffer, { type:"array" });
 
-        const productsSheet = wb.Sheets["Products"];
-        if (!productsSheet) {
-          throw new Error("No 'Products' sheet found in template.");
+        const productsSheet = wb.Sheets[PRODUCTS_SHEET_NAME];
+        if (!productsSheet) throw new Error("No '" + PRODUCTS_SHEET_NAME + "' sheet found in template.");
+
+        const guidedSheet = wb.Sheets[GUIDED_SHEET_NAME];
+        if (!guidedSheet) throw new Error("No '" + GUIDED_SHEET_NAME + "' sheet found in template.");
+
+        const checklistsSheet = wb.Sheets[CHECKLISTS_SHEET_NAME];
+        if (!checklistsSheet) throw new Error("No '" + CHECKLISTS_SHEET_NAME + "' sheet found in template.");
+
+        // Read Products exactly from A3:H500
+        const productsTable = readRangeAsTable(productsSheet, PRODUCTS_RANGE_A1);
+        const headers = productsTable.headers || [];
+        const dataRows = productsTable.dataRows || [];
+
+        const { products, map } = buildProductsIndex(headers, dataRows);
+
+        // Read Guided
+        const guidedItems = readGuidedList(guidedSheet);
+
+        // Detect checklist ranges
+        const checklistRanges = detectChecklistRanges(checklistsSheet);
+
+        // Update UI hint (this fixes your “0 detected products” confusion)
+        const hintEl = document.getElementById("templateHint");
+        if (hintEl) {
+          hintEl.textContent =
+            "This should be your master template. Reads Guided + Products, writes into Checklists. " +
+            "Products range: " + PRODUCTS_RANGE_A1 + " | header row: " + PRODUCTS_HEADER_ROW_1BASED +
+            " | data rows: " + PRODUCTS_DATA_START_ROW_1BASED + "–" + PRODUCTS_DATA_END_ROW_1BASED +
+            " | detected products: " + products.length;
         }
 
-        // NEW (Be Strict): determine product table range from named range if present (don’t assume row limits).
-        // Preference order is intentional; add more aliases here if you later rename it.
-        const preferredRangeNames = ["ProductLookup", "ProductsLookup", "ProductList", "ProductsList", "ProductTable", "ProductsTable"];
-        const named = getNamedRangeRef(wb, preferredRangeNames);
-
-        let usedSheetName = "Products";
-        let rangeObj = null;
-        let rangeLabel = "";
-
-        if (named && named.ref) {
-          const norm = normalizeRef(named.ref);
-          if (norm && norm.sheetName && norm.rangeA1) {
-            usedSheetName = norm.sheetName;
-            const sheet = wb.Sheets[usedSheetName];
-            if (sheet) {
-              rangeObj = XLSX.utils.decode_range(norm.rangeA1);
-              rangeLabel = named.name + ": " + usedSheetName + "!" + norm.rangeA1;
-              logDebug("Detected named range for products: " + rangeLabel);
-            } else {
-              logDebug("Named range '" + named.name + "' points to missing sheet: " + usedSheetName);
-            }
-          }
+        if (!products.length) {
+          throw new Error("Detected 0 products in Products range " + PRODUCTS_RANGE_A1 + ". Check that Products!A3:H500 contains your headers + rows.");
         }
 
-        if (!rangeObj) {
-          // Fallback to sheet used range (existing behaviour, but now explicit)
-          rangeObj = XLSX.utils.decode_range(productsSheet["!ref"] || "A1:A1");
-          rangeLabel = "Sheet !ref: Products!" + (productsSheet["!ref"] || "A1:A1");
-          logDebug("No recognised named range found; using Products sheet !ref.");
-        }
-
-        // Read only the range for products (header row + data rows)
-        const sheetToUse = wb.Sheets[usedSheetName] || productsSheet;
-        const rows = XLSX.utils.sheet_to_json(sheetToUse, { header:1, range: rangeObj });
-
-        if (!rows.length) {
-          throw new Error("Products range appears empty (no rows).");
-        }
-
-        const headers = rows[0] || [];
-        const dataRows = rows.slice(1);
-
-        // Count rows with a non-empty Product name (assume column A in the named range)
-        const nonEmptyProducts = dataRows.filter(r => {
-          const v = r && r[0];
-          return v != null && String(v).trim() !== "";
-        });
-
-        const headerExcelRow = (rangeObj.s.r + 1); // 1-based
-        const firstDataExcelRow = headerExcelRow + 1;
-        const lastExcelRow = (rangeObj.e.r + 1);
-
-        updateProductsRangeInfo(
-          "Products range: " + rangeLabel +
-          " | header row: " + headerExcelRow +
-          " | data rows: " + firstDataExcelRow + "–" + lastExcelRow +
-          " | detected products: " + nonEmptyProducts.length
-        );
-
-        logDebug(
-          "Products range info: " + rangeLabel +
-          " (header row " + headerExcelRow +
-          ", data rows " + firstDataExcelRow + "–" + lastExcelRow +
-          ", detected products " + nonEmptyProducts.length + ")"
-        );
-
-        // Build AI table: include rowIndex aligned to real Excel row numbers inside the chosen range.
-        const productTableForAI = dataRows
-          .map((row, idx) => {
-            const excelRow = (rangeObj.s.r + idx + 2); // 1-based row number of this data row
-            const obj = { rowIndex: excelRow };
-            headers.forEach((h, colIdx) => {
-              if (!h) return;
-              obj[String(h)] = row[colIdx];
-            });
-            return obj;
-          })
-          // Keep it sane: ignore blank "Product name" rows (column A in the range)
-          .filter(obj => {
-            const nameVal = dataRows[(obj.rowIndex - (rangeObj.s.r + 2))] && dataRows[(obj.rowIndex - (rangeObj.s.r + 2))][0];
-            return nameVal != null && String(nameVal).trim() !== "";
-          });
-
-        if (!productTableForAI.length) {
-          throw new Error("No usable products detected in the chosen range (column A appears blank).");
-        }
-
+        // Ask model to select products (and allow MISC fallback without blocking on Category)
         const apiKey = getOpenAIKeyOrThrow();
+
         const systemPrompt =
-          "You are helping choose products from an AV company's master spreadsheet.\n" +
-          "You receive:\n" +
-          "- A structured consultation summary with productNeeds.\n" +
-          "- A list of products from the spreadsheet, with their columns exactly as given.\n\n" +
-          "Your job:\n" +
-          "- For each product need, choose the most appropriate product(s) from the list.\n" +
-          "- Decide which checklist the product should appear in: 'Audio', 'Visual', 'Control', 'Streaming', 'Infrastructure', or 'Other'.\n" +
-          "- Suggest a quantity (0 if you really cannot tell, but try to infer from the needs).\n" +
-          "- Add a short notes field with key details (e.g. 'Combi JTS RX – 1 HH + 1 belt-pack', 'White finish', 'Left wall mount', etc.).\n\n" +
-          "Rules:\n" +
-          "- Do NOT invent product names not present in the products table.\n" +
-          "- You may choose multiple products for a single need if sensible (e.g. projector + mount + wallplate).\n" +
-          "- If the products list includes a 'Category' column, you MAY use it as a hint, but it must NOT prevent choosing compatible items across categories.\n" +
-          "- If multiple products fit, choose the most likely / standard option.\n\n" +
+          "You are an AV consultant selecting products for a job from an in-house spreadsheet.\n" +
+          "You MUST follow 'Be Strict' rules:\n" +
+          "1) Prefer items already in Products.\n" +
+          "2) You may use Guided items as a strong hint of preferred stock.\n" +
+          "3) Category is a hint ONLY. It must NOT prevent selecting supporting items (e.g. routers, network switches) for any system.\n" +
+          "4) Do NOT invent prices or supplier links.\n" +
+          "5) If you cannot match a need to an existing product, create an item with matchType='needs_sourcing' and assign checklist='MISC' with a clear note of what to source.\n\n" +
           "Return STRICT JSON ONLY in this format:\n" +
           "{\n" +
-          '  \"items\": [\n' +
+          '  "items": [\n' +
           "    {\n" +
-          '      \"rowIndex\": 0,\n' +
-          '      \"checklist\": \"Audio | Visual | Control | Streaming | Infrastructure | Other\",\n' +
-          '      \"quantity\": 0,\n' +
-          '      \"notes\": \"short engineer-facing note\",\n' +
-          '      \"reason\": \"why this product was chosen (brief)\",\n' +
-          '      \"productSnapshot\": { }\n' +
+          '      "matchType": "matched" | "needs_sourcing",\n' +
+          '      "productName": "Exact product name from Products when matched, otherwise a suggested product description",\n' +
+          '      "rowIndex": 0,\n' +
+          '      "checklist": "Audio | Visual | Control | Streaming | Infrastructure | Other | MISC",\n' +
+          '      "quantity": 0,\n' +
+          '      "notes": "",\n' +
+          '      "reason": ""\n' +
           "    }\n" +
           "  ]\n" +
           "}\n" +
@@ -1181,8 +1248,22 @@
 
         const payload = {
           structuredSummary: lastStructuredSummary,
-          products: productTableForAI
+          guidedPreferredKit: guidedItems,
+          productsTable: products.map(p => {
+            // keep full row as context
+            const clone = {};
+            Object.keys(p).forEach(k => {
+              if (k.startsWith("__")) return;
+              clone[k] = p[k];
+            });
+            clone.__name = p.__name;
+            clone.__nameNorm = p.__nameNorm;
+            return clone;
+          })
         };
+
+        setAiStatus("Selecting products (consultant mode)…", false);
+        logDebug("Step 3 AI selecting products using PRODUCT_MODEL=" + PRODUCT_MODEL);
 
         const res = await fetch("https://api.openai.com/v1/responses", {
           method:"POST",
@@ -1191,26 +1272,22 @@
             "Authorization":"Bearer " + apiKey
           },
           body: JSON.stringify({
-            model: TEXT_MODEL,
+            model: PRODUCT_MODEL,
             input: [
               { role:"system", content: systemPrompt },
               { role:"user", content: JSON.stringify(payload) }
             ]
           })
         });
+
         if (!res.ok) {
           const txt = await res.text().catch(() => "");
           throw new Error("Product selection AI error " + res.status + ": " + txt);
         }
+
         const data = await res.json();
         let rawText = "";
-        if (
-          data.output &&
-          data.output[0] &&
-          data.output[0].content &&
-          data.output[0].content[0] &&
-          data.output[0].content[0].text
-        ) {
+        if (data.output && data.output[0] && data.output[0].content && data.output[0].content[0] && data.output[0].content[0].text) {
           rawText = data.output[0].content[0].text;
         } else {
           throw new Error("Unexpected product AI response shape.");
@@ -1224,98 +1301,153 @@
           throw new Error("Could not parse JSON from product AI.");
         }
 
-        lastProductSelection = {
-          workbook: wb,
-          headers,
-          rows,
-          selection: parsed.items || []
-        };
+        const items = Array.isArray(parsed.items) ? parsed.items : [];
+        if (!items.length) throw new Error("AI returned 0 items. Nothing to write.");
 
-        renderProductSelectionTable(lastProductSelection);
-        setAiStatus("Product suggestions generated. Review before downloading workbook.", false);
+        // Prepare write plan and write into Checklists
+        const preview = [];
+        const writeCounts = {};
+
+        // load existing occupancy to avoid overwriting filled lines
+        function findNextEmptyRow(rangeObj) {
+          for (let r = rangeObj.startRow; r <= rangeObj.endRow; r++) {
+            const v = getCellValue(checklistsSheet, r, CHECKLISTS_PRODUCT_COL);
+            if (!String(v || "").trim()) return r;
+          }
+          return null;
+        }
+
+        for (const it of items) {
+          const matchType = it.matchType || "matched";
+          const qty = (it.quantity != null ? it.quantity : "");
+          const notes = String(it.notes || "");
+          const reason = String(it.reason || "");
+
+          const checklistKey = pickChecklistKeyFromModel(it.checklist || "");
+          let rangeObj = findRangeByKey(checklistRanges, checklistKey);
+          if (!rangeObj) rangeObj = findRangeByKey(checklistRanges, "misc");
+
+          const rowToWrite = findNextEmptyRow(rangeObj);
+          if (!rowToWrite) {
+            preview.push({
+              status: "skipped_full",
+              checklist: rangeObj ? rangeObj.title : "Unknown",
+              product: it.productName || "",
+              qty,
+              notes: "Checklist range full; could not write.",
+              reason
+            });
+            continue;
+          }
+
+          let productCellValue = "";
+          let resolvedRowIndex = 0;
+
+          if (matchType === "matched") {
+            const desiredName = String(it.productName || "").trim();
+            const norm = normalizeStr(desiredName);
+            const found = map.get(norm);
+
+            if (!found) {
+              // strict fallback: treat as needs_sourcing (don’t make up a match)
+              productCellValue = "NEEDS SOURCING: " + (desiredName || "Unmatched product");
+              resolvedRowIndex = 0;
+            } else {
+              productCellValue = found.__name;
+              resolvedRowIndex = found.rowIndex || 0;
+            }
+          } else {
+            productCellValue = "NEEDS SOURCING: " + String(it.productName || "Unspecified item").trim();
+            resolvedRowIndex = 0;
+          }
+
+          // Write product + qty
+          setCellValue(checklistsSheet, rowToWrite, CHECKLISTS_PRODUCT_COL, productCellValue);
+          ensureRefCovers(checklistsSheet, rowToWrite, CHECKLISTS_PRODUCT_COL);
+
+          // Qty: only write if provided and non-zero-ish
+          if (qty !== "" && qty != null) {
+            setNumberCell(checklistsSheet, rowToWrite, CHECKLISTS_QTY_COL, qty);
+            ensureRefCovers(checklistsSheet, rowToWrite, CHECKLISTS_QTY_COL);
+          }
+
+          const noteCombined = [
+            notes ? ("Notes: " + notes) : "",
+            reason ? ("Why: " + reason) : ""
+          ].filter(Boolean).join(" | ");
+
+          preview.push({
+            status: "written",
+            checklist: rangeObj ? rangeObj.title : "Unknown",
+            row: rowToWrite,
+            product: productCellValue,
+            qty,
+            productRowIndex: resolvedRowIndex,
+            notes: noteCombined
+          });
+
+          writeCounts[rangeObj.key] = (writeCounts[rangeObj.key] || 0) + 1;
+        }
+
+        lastWorkbookState = { wb, preview };
+
+        renderWritePreview(preview);
+        setAiStatus("Step 3 complete: wrote into Checklists. Review preview, then download.", false);
+        logDebug("Step 3 wrote items: " + JSON.stringify(writeCounts));
       } catch (e) {
         console.error(e);
-        setAiStatus(e.message || "Error generating product suggestions.", true);
+        setAiStatus(e.message || "Error populating checklist.", true);
       } finally {
         document.getElementById("generateProductsBtn").disabled = false;
       }
     }
 
-    function renderProductSelectionTable(state) {
+    function renderWritePreview(preview) {
       const wrap = document.getElementById("productsTableWrapper");
-      if (!state || !state.selection || !state.selection.length) {
-        wrap.textContent = "No products suggested.";
+      if (!preview || !preview.length) {
+        wrap.textContent = "No items written.";
         return;
       }
-      const rowsHtml = state.selection.map(item => {
-        const rowIdx = item.rowIndex;
-        const checklist = item.checklist || "";
-        const qty = item.quantity != null ? String(item.quantity) : "";
-        const notes = item.notes || "";
-        const reason = item.reason || "";
-        const snapshot = item.productSnapshot || {};
-        const name = snapshot.Name || snapshot.name || snapshot.Product || "";
+
+      const rowsHtml = preview.map(p => {
         return "<tr>" +
-          "<td>" + escapeHtml(checklist) + "</td>" +
-          "<td>" + escapeHtml(String(qty)) + "</td>" +
-          "<td>" + escapeHtml(name || "[from row " + rowIdx + "]") + "</td>" +
-          "<td>" + escapeHtml(notes) + "</td>" +
-          "<td>" + escapeHtml(reason) + "</td>" +
+          "<td>" + escapeHtml(p.status || "") + "</td>" +
+          "<td>" + escapeHtml(p.checklist || "") + "</td>" +
+          "<td>" + escapeHtml(String(p.row || "")) + "</td>" +
+          "<td>" + escapeHtml(String(p.qty != null ? p.qty : "")) + "</td>" +
+          "<td>" + escapeHtml(p.product || "") + "</td>" +
+          "<td>" + escapeHtml(p.notes || "") + "</td>" +
         "</tr>";
       }).join("");
 
       wrap.innerHTML =
         "<table>" +
           "<thead><tr>" +
+            "<th>Status</th>" +
             "<th>Checklist</th>" +
+            "<th>Row</th>" +
             "<th>Qty</th>" +
-            "<th>Product</th>" +
+            "<th>Product written</th>" +
             "<th>Notes</th>" +
-            "<th>Why chosen</th>" +
           "</tr></thead>" +
           "<tbody>" + rowsHtml + "</tbody>" +
         "</table>";
     }
 
     function handleDownloadFilledTemplate() {
-      if (!lastProductSelection) {
-        alert("Generate product suggestions first.");
-        return;
-      }
-      const { workbook, selection } = lastProductSelection;
-      const data = selection || [];
-      if (!data.length) {
-        alert("No suggested products to write.");
+      if (!lastWorkbookState || !lastWorkbookState.wb) {
+        alert("Run Step 3 first.");
         return;
       }
       if (typeof XLSX === "undefined") {
         alert("Spreadsheet library (XLSX) is not available.");
         return;
       }
-
-      const header = ["Checklist","Qty","RowIndex","Notes","Reason","ProductSnapshot"];
-      const rows = [header];
-      data.forEach(item => {
-        rows.push([
-          item.checklist || "",
-          item.quantity != null ? item.quantity : "",
-          item.rowIndex != null ? item.rowIndex : "",
-          item.notes || "",
-          item.reason || "",
-          JSON.stringify(item.productSnapshot || {})
-        ]);
-      });
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      workbook.Sheets["AutoSelected"] = ws;
-      if (!workbook.SheetNames.includes("AutoSelected")) {
-        workbook.SheetNames.push("AutoSelected");
-      }
-
-      const wbout = XLSX.write(workbook, { bookType:"xlsx", type:"array" });
+      const wbout = XLSX.write(lastWorkbookState.wb, { bookType:"xlsx", type:"array" });
       const blob = new Blob([wbout], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "template_with_autoselected.xlsx";
+      a.download = "template_filled_checklists.xlsx";
       document.body.appendChild(a);
       a.click();
       setTimeout(() => {
@@ -1346,12 +1478,12 @@
         const arrayBuffer = await file.arrayBuffer();
         const wb = XLSX.read(arrayBuffer, { type:"array" });
 
-        let sheetName = "Clean";
-        if (!wb.Sheets[sheetName]) {
-          sheetName = wb.SheetNames[0];
-        }
+        let sheetName = CHECKLISTS_SHEET_NAME;
+        if (!wb.Sheets[sheetName]) sheetName = wb.SheetNames[0];
+
         const sheet = wb.Sheets[sheetName];
         if (!sheet) throw new Error("No usable sheet found in priced workbook.");
+
         const table = XLSX.utils.sheet_to_json(sheet, { header:1 });
 
         const apiKey = getOpenAIKeyOrThrow();
@@ -1359,27 +1491,11 @@
           "You are generating a client-facing AV proposal/quote based on a priced spreadsheet and a consultation summary.\n\n" +
           "You will receive:\n" +
           "- A structured consultation summary (issues, current equipment, agreed solution).\n" +
-          "- A table from the 'Clean' (or equivalent) sheet of a spreadsheet that includes products, prices, quantities, totals, and possibly labour/time.\n\n" +
-          "Your job:\n" +
-          "1) Identify the main components that should be described in the proposal (projectors, screens/TVs, main speakers, amps, microphones, key control hardware, streaming hardware etc.).\n" +
-          "   Do NOT write paragraphs about minor items (mounts, brackets, small accessories).\n" +
-          "2) For each main component, write a short, clear description referencing relevant details from the consultation summary\n" +
-          "   (e.g. mounting position like 'left wall', use-cases like film nights, speech clarity, etc.).\n" +
-          "3) Group costs sensibly (e.g. Audio, Visual, Control, Infrastructure, Labour) and show totals per group plus a grand total.\n" +
-          "4) Mention estimated days on site, based on any labour/time information in the table (if present). If there is genuinely no\n" +
-          "   indication of labour/time, say 'Installation duration to be confirmed'.\n" +
-          "5) Write this as a proposal/quote that could be sent to the client, in clear UK English.\n\n" +
+          "- A table from the 'Checklists' (or equivalent) sheet that includes selected products and derived pricing.\n\n" +
           "Rules:\n" +
-          "- Do NOT invent extra products or prices. Work only from the spreadsheet table.\n" +
-          "- You may infer reasonable grouping from column headers (e.g. 'Category', 'Checklist', etc.).\n" +
-          "- Do NOT expose raw spreadsheet table in the body, but you can refer to product names.\n\n" +
-          "Structure the output as:\n" +
-          "1) Short opening paragraph referencing the client's situation.\n" +
-          "2) Bullet list of key benefits of the proposed solution.\n" +
-          "3) Headings for each main area (Audio System, Visual System, Control/Operation, Streaming/Broadcast, Infrastructure & Cabling, Labour & Timescales).\n" +
-          "4) Under each heading, short paragraphs describing what is included.\n" +
-          "5) Section with pricing breakdown per area and overall total.\n" +
-          "6) Closing paragraph about next steps.\n";
+          "- Do NOT invent extra products or prices.\n" +
+          "- Group by sensible areas (Audio, Visual, Control, Infrastructure, Labour).\n\n" +
+          "Write clear UK English suitable for a quote email.\n";
 
         const payload = {
           structuredSummary: lastStructuredSummary,
@@ -1408,13 +1524,7 @@
         }
         const data = await res.json();
         let text = "";
-        if (
-          data.output &&
-          data.output[0] &&
-          data.output[0].content &&
-          data.output[0].content[0] &&
-          data.output[0].content[0].text
-        ) {
+        if (data.output && data.output[0] && data.output[0].content && data.output[0].content[0] && data.output[0].content[0].text) {
           text = data.output[0].content[0].text;
         } else {
           throw new Error("Unexpected proposal response shape.");
@@ -1463,45 +1573,24 @@
     // AI DEBUGGER LOGIC
     // ====================
     const aiDebuggerSystemPrompt =
-      "You are an AI debugger for a single-page AV tool called 'Consultation Meeting Processor'.\\n" +
-      "The tool is delivered as a single index.html and runs entirely in the browser (no backend).\\n" +
-      "Your job is to review the current index.html source, the debug log, structured AI JSON, and browser errors to explain problems and propose minimal, safe fixes.\\n\\n" +
-      "Important rules (labelled 'Be Strict'):\\n" +
-      "1) Only change code when you can point to a concrete bug, missing handler, or clearly unsafe behaviour.\\n" +
-      "2) Never rewrite or simplify working code.\\n" +
-      "3) Keep all existing layout, styling, naming, and structure unless a specific bug forces a change.\\n" +
-      "4) When you change code, you must:\\n" +
-      "   - Explain the issue in plain language,\\n" +
-      "   - Explain why your change fixes it,\\n" +
-      "   - Describe exactly where the change belongs (function name or HTML section),\\n" +
-      "   - Provide a full replacement index.html with your changes applied.\\n" +
-      "5) The replacement index must be COMPLETE, from <!doctype html> to </html>, with NO truncation, ellipses, or placeholders.\\n" +
-      "6) Do not invent external configuration fixes (API keys, account/project changes, quotas). If the problem is external, say so explicitly.\\n\\n" +
-      "You will be given a JSON payload with:\\n" +
-      "- toolName, versionPill\\n" +
-      "- indexHtml (full current page source)\\n" +
-      "- debugLog (internal debug text)\\n" +
-      "- structuredJsonDebug (JSON from earlier AI calls, if any)\\n" +
-      "- browserErrors (window.onerror / unhandledrejection text)\\n" +
-      "- consoleCaptured (captured console.log/warn/error lines)\\n" +
-      "- consoleExtra (freeform text written by the user: problem description and/or pasted console)\\n\\n" +
-      "You must respond with STRICT JSON in this shape:\\n" +
-      "{\\n" +
-      '  \"outcome\": \"code_fix\" | \"external_issue\" | \"no_issue\",\\n' +
-      '  \"summary\": \"Short summary of what you found.\",\\n' +
-      '  \"reasons\": [\"reason 1\", \"reason 2\", \"...\"],\\n' +
-      '  \"changes\": [\\n' +
-      "    {\\n" +
-      '      \"section\": \"short label (e.g. transcribeAudio, Google auth)\",\\n' +
-      '      \"reason\": \"why this section needs a change\",\\n' +
-      '      \"beforeSnippet\": \"optional short snippet from the old code (can be empty)\",\\n' +
-      '      \"afterSnippet\": \"the corresponding fixed snippet (can be empty if not applicable)\"\\n' +
-      "    }\\n" +
-      "  ],\\n" +
-      '  \"replacementIndexHtml\": \"Full index.html with your fixes applied, or an empty string if no code changes are needed.\",\\n' +
-      '  \"chatgptPrompt\": \"If outcome is external_issue, write a prompt the user can paste into ChatGPT to get further help. Otherwise empty string.\"\\n' +
-      "}\\n" +
-      "If you believe the issue cannot be solved by changing index.html (for example: account or quota issues, missing model access, or third-party service outages), set outcome to \\\"external_issue\\\" and do NOT propose code changes.";
+      "You are an AI debugger for a single-page AV tool called 'Consultation Meeting Processor'.\n" +
+      "The tool is delivered as a single index.html and runs entirely in the browser (no backend).\n" +
+      "Your job is to review the current index.html source, the debug log, structured AI JSON, and browser errors to explain problems and propose minimal, safe fixes.\n\n" +
+      "Be Strict rules:\n" +
+      "1) Only change code when you can point to a concrete bug.\n" +
+      "2) Never rewrite or simplify working code.\n" +
+      "3) Keep existing layout and naming unless forced.\n" +
+      "4) If you propose code changes, provide a FULL replacement index.html.\n" +
+      "5) If the issue is external (permissions, quota, third-party outage), say so.\n\n" +
+      "Return STRICT JSON:\n" +
+      "{\n" +
+      '  "outcome":"code_fix|external_issue|no_issue",\n' +
+      '  "summary":"",\n' +
+      '  "reasons":[],\n' +
+      '  "changes":[{"section":"","reason":"","beforeSnippet":"","afterSnippet":""}],\n' +
+      '  "replacementIndexHtml":"",\n' +
+      '  "chatgptPrompt":""\n' +
+      "}";
 
     async function handleRunAiDebugger() {
       let apiKey;
@@ -1519,7 +1608,6 @@
       setAiStatus("Running AI Debugger…", false);
       logDebug("AI Debugger invoked.");
 
-      // Caps to reduce "fails when user types" (payload bloat)
       const MAX_DEBUGLOG_CHARS = 40000;
       const MAX_STRUCTURED_CHARS = 25000;
       const MAX_USER_CHARS = 8000;
@@ -1568,13 +1656,7 @@
 
         const data = await res.json();
         let rawText = "";
-        if (
-          data.output &&
-          data.output[0] &&
-          data.output[0].content &&
-          data.output[0].content[0] &&
-          data.output[0].content[0].text
-        ) {
+        if (data.output && data.output[0] && data.output[0].content && data.output[0].content[0] && data.output[0].content[0].text) {
           rawText = data.output[0].content[0].text;
         } else {
           throw new Error("Unexpected AI Debugger response shape.");
@@ -1597,14 +1679,10 @@
 
         let outText = "";
         outText += "Outcome: " + outcome + "\n";
-        if (summary) {
-          outText += "\nSummary:\n" + summary + "\n";
-        }
+        if (summary) outText += "\nSummary:\n" + summary + "\n";
         if (reasons.length) {
           outText += "\nReasons:\n";
-          reasons.forEach((r) => {
-            outText += "- " + r + "\n";
-          });
+          reasons.forEach(r => outText += "- " + r + "\n");
         }
         if (changes.length) {
           outText += "\nChanges:\n";
@@ -1618,13 +1696,9 @@
         if (outEl) outEl.textContent = outText || "(no details provided by AI Debugger)";
 
         if (replEl) {
-          if (outcome === "code_fix" && replacementIndexHtml) {
-            replEl.textContent = replacementIndexHtml;
-          } else if (outcome === "external_issue" && chatgptPrompt) {
-            replEl.textContent = chatgptPrompt;
-          } else {
-            replEl.textContent = "(no replacement index provided)";
-          }
+          if (outcome === "code_fix" && replacementIndexHtml) replEl.textContent = replacementIndexHtml;
+          else if (outcome === "external_issue" && chatgptPrompt) replEl.textContent = chatgptPrompt;
+          else replEl.textContent = "(no replacement index provided)";
         }
 
         setAiStatus("AI Debugger finished. Review its output below.", false);
@@ -1643,11 +1717,7 @@
     function refreshApiKeyStatus() {
       const statusEl = document.getElementById("apiKeyStatus");
       const key = localStorage.getItem(OPENAI_KEY_STORAGE);
-      if (key) {
-        statusEl.textContent = "API key is stored in this browser.";
-      } else {
-        statusEl.textContent = "No API key stored yet.";
-      }
+      statusEl.textContent = key ? "API key is stored in this browser." : "No API key stored yet.";
     }
 
     function handleSaveApiKey() {
@@ -1675,7 +1745,7 @@
     window.addEventListener("DOMContentLoaded", () => {
       logDebug("DOM loaded.");
 
-      // Capture console output (log/warn/error) into consoleLogCapture for AI Debugger
+      // Capture console output for AI Debugger
       (function hookConsole() {
         try {
           const origLog = console.log ? console.log.bind(console) : null;
@@ -1721,7 +1791,6 @@
         }
       })();
 
-      // Capture browser-level errors into browserErrorLog and debug pane
       window.addEventListener("error", (event) => {
         const msg = (event.message || "Unknown error") +
           (event.filename ? (" @ " + event.filename + ":" + event.lineno + ":" + event.colno) : "");
@@ -1748,24 +1817,18 @@
         const idx = eventSelect.value;
         if (!idx) return;
         const ev = currentEvents[Number(idx)];
-        if (ev) {
-          setStatus("Selected: " + (ev.summary || "(no title)"), false);
-        }
+        if (ev) setStatus("Selected: " + (ev.summary || "(no title)"), false);
       });
 
       const runAiDebuggerBtn = document.getElementById("runAiDebuggerBtn");
       if (runAiDebuggerBtn) runAiDebuggerBtn.addEventListener("click", handleRunAiDebugger);
 
-      // Date range advanced panel handlers
       const applyDateBtn = document.getElementById("applyDateRangeBtn");
       const clearDateBtn = document.getElementById("clearDateRangeBtn");
       if (applyDateBtn && clearDateBtn) {
         applyDateBtn.addEventListener("click", () => {
-          const startInput = document.getElementById("startDateInput");
-          const endInput = document.getElementById("endDateInput");
-          const startVal = startInput && startInput.value;
-          const endVal = endInput && endInput.value;
-
+          const startVal = document.getElementById("startDateInput")?.value;
+          const endVal = document.getElementById("endDateInput")?.value;
           if (!startVal || !endVal) {
             setStatus("Both start and end dates are required for a custom range.", true);
             return;
@@ -1774,7 +1837,6 @@
             setStatus("Start date cannot be after end date.", true);
             return;
           }
-
           customDateRange.start = startVal;
           customDateRange.end = endVal;
           logDebug("Custom date range set via UI.");
@@ -1782,10 +1844,8 @@
         });
 
         clearDateBtn.addEventListener("click", () => {
-          const startInput = document.getElementById("startDateInput");
-          const endInput = document.getElementById("endDateInput");
-          if (startInput) startInput.value = "";
-          if (endInput) endInput.value = "";
+          document.getElementById("startDateInput").value = "";
+          document.getElementById("endDateInput").value = "";
           customDateRange.start = null;
           customDateRange.end = null;
           logDebug("Custom date range cleared; reverting to default window.");
@@ -1793,15 +1853,12 @@
         });
       }
 
-      // API key handlers
       document.getElementById("saveApiKeyBtn").addEventListener("click", handleSaveApiKey);
       document.getElementById("clearApiKeyBtn").addEventListener("click", handleClearApiKey);
       refreshApiKeyStatus();
 
-      updateProductsRangeInfo("Products range: (upload template and click Generate to detect named range)");
       setStatus("Waiting for sign-in…", false);
 
-      // Prepare Google auth client
       setTimeout(() => {
         try { initAuth(); } catch(e) { logDebug("initAuth error: " + e.message); }
       }, 0);
