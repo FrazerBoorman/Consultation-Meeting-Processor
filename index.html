@@ -385,32 +385,43 @@
 
       <!-- STEP 3 – Spreadsheet template / product suggestions -->
       <div class="section">
-        <div class="section-title">Step 3 – Suggest products from template spreadsheet</div>
+        <div class="section-title">Step 3 – Populate your spreadsheet template (Guided + Products → Checklists)</div>
         <div class="grid">
           <div>
-            <label for="templateFile">Upload template spreadsheet (with “Products” sheet)</label>
+            <label for="templateFile">Upload template spreadsheet</label>
             <input id="templateFile" type="file" accept=".xlsx,.xlsm,.xls" />
             <div class="small-note">
-              This should be your master template. The tool reads the <strong>Products</strong> sheet,
-              then writes selected rows into a new <strong>AutoSelected</strong> sheet rather than touching your formulas.
+              The tool reads:
+              <strong>Products</strong> (A3:H500 headers on row 3, data rows A4:H500) and
+              <strong>Guided</strong> (frequent kit),
+              then writes the chosen <strong>Product</strong> (col C) and <strong>Qty</strong> (col G) into the existing
+              <strong>Checklists</strong> sheet (and uses <strong>MISC</strong> from row 278 for anything not in your Products list).
+              It does <strong>not</strong> overwrite formula columns.
             </div>
-            <div class="small-note" id="productsRangeInfo" style="margin-top:6px;">
-              Products range: (not read yet)
+            <div id="productsDetectStatus" class="small-note" style="margin-top:6px;"></div>
+          </div>
+          <div>
+            <label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
+              <input type="checkbox" id="allowAIPricingLinks" />
+              Allow AI to suggest price/link for unlisted products (may be wrong)
+            </label>
+            <div class="small-note">
+              Default OFF (Be Strict). If OFF, unlisted items go into MISC with name + qty + justification, but price/link stay blank.
             </div>
           </div>
         </div>
 
         <div class="btn-row">
-          <button id="generateProductsBtn" type="button">Generate product checklist (from summary + Products sheet)</button>
-          <button id="downloadFilledTemplateBtn" type="button">Download workbook with AutoSelected</button>
+          <button id="generateProductsBtn" type="button">Generate &amp; write into Checklists</button>
+          <button id="downloadFilledTemplateBtn" type="button">Download populated workbook</button>
         </div>
 
         <div class="small-note">
-          Review the suggested products before you commit. Quantities &amp; notes come from the transcript where possible.
+          Category is guidance only — it must never block cross-category dependencies (e.g. routers for mixers).
         </div>
 
         <div style="margin-top:10px;">
-          <label>Suggested products (preview)</label>
+          <label>What will be written (preview)</label>
           <div id="productsTableWrapper">No products suggested yet.</div>
         </div>
       </div>
@@ -424,7 +435,7 @@
             <input id="pricedFile" type="file" accept=".xlsx,.xlsm,.xls" />
             <div class="small-note">
               Use the template you’ve filled with prices, labour, totals etc.
-              The tool will read the <strong>Clean</strong> sheet if present, otherwise the first sheet.
+              The tool will read the <strong>Checklists</strong> sheet if present, otherwise the first sheet.
             </div>
           </div>
         </div>
@@ -474,7 +485,7 @@
       <div class="small-note" style="margin-top:6px;">
         Problem description (what you expected vs what happened) + optional pasted console:
       </div>
-      <textarea id="consoleErrorsInput" rows="5" style="margin-top:4px;" placeholder="Example: 'Advanced date range shows no events, but I can see events next week in Google Calendar…'"></textarea>
+      <textarea id="consoleErrorsInput" rows="5" style="margin-top:4px;" placeholder="Example: 'Step 3 says 0 products detected, but Products has 400 rows…'"></textarea>
       <div class="small-note" style="margin-top:6px;">
         AI Debugger output (summary, reasons, and outline of changes):
       </div>
@@ -519,12 +530,34 @@
     const AUDIO_MODEL = "whisper-1";
     const DEBUG_MODEL = "gpt-5.1";
 
+    // Spreadsheet assumptions (Be Strict: match your actual workbook)
+    const PRODUCTS_SHEET_NAME = "Products";
+    const GUIDED_SHEET_NAME = "Guided";
+    const CHECKLISTS_SHEET_NAME = "Checklists";
+
+    // Products layout: headers on row 3, data rows 4..500, columns A..H
+    const PRODUCTS_HEADER_ROW_1BASED = 3;
+    const PRODUCTS_DATA_START_ROW_1BASED = 4;
+    const PRODUCTS_DATA_END_ROW_1BASED = 500;
+    const PRODUCTS_COL_START = 1; // A
+    const PRODUCTS_COL_END = 8;   // H
+
+    // Checklists layout: Product in col C, Qty in col G
+    const CHECKLISTS_PRODUCT_COL_1BASED = 3; // C
+    const CHECKLISTS_QTY_COL_1BASED = 7;     // G
+    const CHECKLISTS_LINK_COL_1BASED = 10;   // J
+    const CHECKLISTS_NOTES_COL_1BASED = 11;  // K
+
+    // MISC starts at row 278 (headers at 277)
+    const MISC_HEADER_ROW_1BASED = 277;
+    const MISC_DATA_START_ROW_1BASED = 278;
+
     let tokenClient = null;
     let accessToken = null;
     let currentEvents = [];
     let lastTranscript = "";
     let lastStructuredSummary = null;
-    let lastProductSelection = null;
+    let lastProductSelection = null; // { workbook, selection, writePlan }
     let lastProposalText = "";
     let browserErrorLog = [];
     let consoleLogCapture = [];
@@ -545,6 +578,16 @@
       if (!maxItems || maxItems <= 0) return [];
       if (arr.length <= maxItems) return arr.slice();
       return arr.slice(arr.length - maxItems);
+    }
+
+    function asText(v) {
+      if (v == null) return "";
+      return String(v).trim();
+    }
+
+    function safeNumber(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
     }
 
     // ==============
@@ -778,7 +821,7 @@
         return text || "";
       }
 
-      const MAX_CHUNK_BYTES = 24 * 1024 * 1024; // Keep under 25 MB Whisper limit per request
+      const MAX_CHUNK_BYTES = 24 * 1024 * 1024; // Keep under 25 MB limit per request
 
       if (file.size <= MAX_CHUNK_BYTES) {
         logDebug("Audio file size " + (file.size / (1024 * 1024)).toFixed(1) + " MB – single Whisper call.");
@@ -979,56 +1022,188 @@
     // ===========================
     // STEP 3: PRODUCTS / TEMPLATE
     // ===========================
-    function listWorkbookNamedRanges(wb) {
-      const out = [];
-      try {
-        if (wb && wb.Workbook && Array.isArray(wb.Workbook.Names)) {
-          wb.Workbook.Names.forEach(n => {
-            if (n && n.Name && n.Ref) out.push({ name: String(n.Name), ref: String(n.Ref) });
-          });
-        }
-      } catch (e) {
-        // ignore
-      }
-      return out;
+    function updateProductsDetectStatus(text, isError) {
+      const el = document.getElementById("productsDetectStatus");
+      if (!el) return;
+      el.textContent = text || "";
+      el.className = "small-note" + (isError ? " danger" : "");
     }
 
-    function getNamedRangeRef(wb, preferredNames) {
-      const names = listWorkbookNamedRanges(wb);
-      if (!names.length) return null;
+    function readProductsTableFixed(wb) {
+      const sheet = wb.Sheets[PRODUCTS_SHEET_NAME];
+      if (!sheet) throw new Error("No '" + PRODUCTS_SHEET_NAME + "' sheet found in template.");
 
-      const pref = Array.isArray(preferredNames) ? preferredNames : [];
-      for (const wanted of pref) {
-        const found = names.find(n => n.name.toLowerCase() === String(wanted).toLowerCase());
-        if (found) return found;
+      // Read A3:H500 only (Be Strict: match your workbook)
+      const range = {
+        s: { r: PRODUCTS_HEADER_ROW_1BASED - 1, c: PRODUCTS_COL_START - 1 }, // A3
+        e: { r: PRODUCTS_DATA_END_ROW_1BASED - 1, c: PRODUCTS_COL_END - 1 }  // H500
+      };
+
+      const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, range });
+      if (!aoa || !aoa.length) throw new Error("Products range A3:H500 appears empty.");
+
+      const headers = aoa[0].map(h => asText(h));
+      const dataRows = aoa.slice(1); // corresponds to rows 4..500
+
+      const records = [];
+      for (let i = 0; i < dataRows.length; i++) {
+        const row = dataRows[i] || [];
+        const productName = asText(row[0]); // column A in the range
+        const excelRowIndex = PRODUCTS_DATA_START_ROW_1BASED + i; // 4 + i
+        if (!productName) continue;
+
+        const obj = { rowIndex: excelRowIndex };
+        for (let c = 0; c < headers.length; c++) {
+          const key = headers[c] || ("COL" + (c + 1));
+          obj[key] = row[c];
+        }
+        records.push(obj);
+      }
+
+      return { headers, records, fixedRange: "Products!A3:H500 (data A4:H500)" };
+    }
+
+    function readGuidedKit(wb) {
+      const sheet = wb.Sheets[GUIDED_SHEET_NAME];
+      if (!sheet) return { available: false, items: [] };
+
+      // Guided is mostly a human-facing sheet; we just harvest a simple list of product strings as “frequent kit”.
+      // Find “Product” header and then capture column C under it in blocks.
+      const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      if (!aoa || !aoa.length) return { available: false, items: [] };
+
+      const items = [];
+      for (let r = 0; r < aoa.length; r++) {
+        const row = aoa[r] || [];
+        const maybeProduct = asText(row[2]); // column C
+        // Heuristic: guided product rows tend to be long-ish and not formula text
+        if (maybeProduct && maybeProduct.length > 3 && !maybeProduct.includes("VLOOKUP(")) {
+          items.push(maybeProduct);
+        }
+      }
+      // Deduplicate
+      const dedup = Array.from(new Set(items));
+      return { available: true, items: dedup.slice(0, 250) };
+    }
+
+    function findChecklistSections(ws) {
+      // Locate headings like "AUDIO CHECKLIST" etc in column B, and build ranges until next heading
+      const headings = [];
+      const MAX_SCAN = 2000;
+      for (let r = 1; r <= MAX_SCAN; r++) {
+        const v = ws["B" + r] ? ws["B" + r].v : null;
+        const s = asText(v);
+        if (s && s.toUpperCase().includes("CHECKLIST")) {
+          headings.push({ row: r, title: s });
+        }
+      }
+      // Ensure MISC known location, but also keep if found.
+      const sections = {};
+      for (let i = 0; i < headings.length; i++) {
+        const h = headings[i];
+        const next = headings[i + 1];
+        const startRow = h.row + 1; // data typically after header row
+        const endRow = (next ? (next.row - 1) : MAX_SCAN);
+        sections[h.title.toUpperCase()] = { headerRow: h.row, startRow, endRow, title: h.title };
+      }
+      // Add explicit misc, in case heading scan misses it
+      sections["MISC CHECKLIST"] = sections["MISC CHECKLIST"] || {
+        headerRow: MISC_HEADER_ROW_1BASED,
+        startRow: MISC_DATA_START_ROW_1BASED,
+        endRow: MAX_SCAN,
+        title: "MISC CHECKLIST"
+      };
+      return sections;
+    }
+
+    function firstEmptyRowInSection(ws, section, colLetter) {
+      const col = colLetter;
+      for (let r = section.startRow; r <= section.endRow; r++) {
+        const cell = ws[col + r];
+        const v = cell ? cell.v : null;
+        if (!asText(v)) return r;
       }
       return null;
     }
 
-    function normalizeRef(ref) {
-      // SheetJS names often look like: "'Products'!$A$4:$H$500"
-      // or: "Products!$A$4:$H$500"
-      // We return { sheetName, rangeA1 } or null.
-      try {
-        const s = String(ref || "").trim();
-        const bang = s.indexOf("!");
-        if (bang === -1) return null;
-        let sheetPart = s.slice(0, bang);
-        let rangePart = s.slice(bang + 1);
+    function writeIntoChecklists(wb, selection) {
+      const ws = wb.Sheets[CHECKLISTS_SHEET_NAME];
+      if (!ws) throw new Error("No '" + CHECKLISTS_SHEET_NAME + "' sheet found in workbook.");
 
-        sheetPart = sheetPart.replace(/^'/, "").replace(/'$/, "");
-        rangePart = rangePart.replace(/^\$/, "$"); // no-op but keeps intention clear
-        rangePart = rangePart.replace(/^(\$?)([A-Z]+)(\$?)(\d+)/, "$2$4"); // not reliable; do not use
-        // Keep rangePart as-is; XLSX.decode_range handles $.
-        return { sheetName: sheetPart, rangeA1: rangePart };
-      } catch (e) {
-        return null;
+      const sections = findChecklistSections(ws);
+
+      function resolveSectionName(checklist) {
+        const c = asText(checklist).toUpperCase();
+        // Map from your tool’s logical labels to sheet headings
+        if (c === "AUDIO") return "AUDIO CHECKLIST";
+        if (c === "VISUAL") return "VISUAL CHECKLIST";
+        if (c === "CONTROL") return "CONTROL CHECKLIST";
+        if (c === "STREAMING") return "STREAMING CHECKLIST";
+        if (c === "INFRASTRUCTURE") return "INFRASTRUCTURE CHECKLIST";
+        if (c === "OTHER") return "OTHER CHECKLIST";
+        if (c === "MISC") return "MISC CHECKLIST";
+        // Default safe fallback:
+        return "MISC CHECKLIST";
       }
-    }
 
-    function updateProductsRangeInfo(text) {
-      const el = document.getElementById("productsRangeInfo");
-      if (el) el.textContent = text;
+      const writePlan = [];
+      const allowPricingLinks = !!(document.getElementById("allowAIPricingLinks") && document.getElementById("allowAIPricingLinks").checked);
+
+      for (const item of (selection || [])) {
+        const type = asText(item.type) || "existing"; // existing | new
+        const checklist = asText(item.checklist) || "Other";
+        const productName = asText(item.productName);
+        const qty = safeNumber(item.quantity);
+        const notes = asText(item.notes);
+        const reason = asText(item.reason);
+        const link = asText(item.link);
+        const priceExVat = item.priceExVat;
+
+        if (!productName) continue;
+
+        if (type === "new") {
+          const secName = "MISC CHECKLIST";
+          const sec = sections[secName.toUpperCase()];
+          if (!sec) throw new Error("Could not locate MISC checklist section.");
+
+          const row = firstEmptyRowInSection(ws, sec, "C");
+          if (!row) throw new Error("No empty rows found in MISC checklist area.");
+
+          // Write Product (C) + Qty (G) always
+          ws["C" + row] = { t: "s", v: productName };
+          if (qty != null) ws["G" + row] = { t: "n", v: qty };
+
+          // Price/link only if explicitly allowed (Be Strict default OFF)
+          if (allowPricingLinks) {
+            const pn = safeNumber(priceExVat);
+            if (pn != null) ws["F" + row] = { t: "n", v: pn };
+            if (link) ws["J" + row] = { t: "s", v: link };
+          }
+
+          // Notes: include reason so the sheet has the justification
+          const combinedNote = (notes ? notes : "") + (reason ? (notes ? " | " : "") + "Why: " + reason : "");
+          if (combinedNote) ws["K" + row] = { t: "s", v: combinedNote };
+
+          writePlan.push({ writeTo: "MISC", row, productName, qty, allowedPricingLinks: allowPricingLinks });
+          continue;
+        }
+
+        // existing item: write into the chosen checklist section (or MISC if unknown)
+        const secName = resolveSectionName(checklist);
+        const sec = sections[secName.toUpperCase()] || sections["MISC CHECKLIST"];
+        const row = firstEmptyRowInSection(ws, sec, "C");
+        if (!row) throw new Error("No empty rows found in section: " + secName);
+
+        ws["C" + row] = { t: "s", v: productName };
+        if (qty != null) ws["G" + row] = { t: "n", v: qty };
+
+        const combinedNote = (notes ? notes : "") + (reason ? (notes ? " | " : "") + "Why: " + reason : "");
+        if (combinedNote) ws["K" + row] = { t: "s", v: combinedNote };
+
+        writePlan.push({ writeTo: secName, row, productName, qty });
+      }
+
+      return writePlan;
     }
 
     async function handleGenerateProducts() {
@@ -1045,144 +1220,87 @@
       const fileInput = document.getElementById("templateFile");
       const file = fileInput.files && fileInput.files[0];
       if (!file) {
-        setAiStatus("Upload your template spreadsheet (with Products sheet) first.", true);
+        setAiStatus("Upload your template spreadsheet first.", true);
         return;
       }
 
-      setAiStatus("Reading template & sending to AI for product selection…", false);
+      setAiStatus("Reading workbook & generating product plan…", false);
       document.getElementById("generateProductsBtn").disabled = true;
 
       try {
         const arrayBuffer = await file.arrayBuffer();
         const wb = XLSX.read(arrayBuffer, { type:"array" });
 
-        const productsSheet = wb.Sheets["Products"];
-        if (!productsSheet) {
-          throw new Error("No 'Products' sheet found in template.");
-        }
+        const { records, fixedRange } = readProductsTableFixed(wb);
+        const guided = readGuidedKit(wb);
 
-        // NEW (Be Strict): determine product table range from named range if present (don’t assume row limits).
-        // Preference order is intentional; add more aliases here if you later rename it.
-        const preferredRangeNames = ["ProductLookup", "ProductsLookup", "ProductList", "ProductsList", "ProductTable", "ProductsTable"];
-        const named = getNamedRangeRef(wb, preferredRangeNames);
-
-        let usedSheetName = "Products";
-        let rangeObj = null;
-        let rangeLabel = "";
-
-        if (named && named.ref) {
-          const norm = normalizeRef(named.ref);
-          if (norm && norm.sheetName && norm.rangeA1) {
-            usedSheetName = norm.sheetName;
-            const sheet = wb.Sheets[usedSheetName];
-            if (sheet) {
-              rangeObj = XLSX.utils.decode_range(norm.rangeA1);
-              rangeLabel = named.name + ": " + usedSheetName + "!" + norm.rangeA1;
-              logDebug("Detected named range for products: " + rangeLabel);
-            } else {
-              logDebug("Named range '" + named.name + "' points to missing sheet: " + usedSheetName);
-            }
-          }
-        }
-
-        if (!rangeObj) {
-          // Fallback to sheet used range (existing behaviour, but now explicit)
-          rangeObj = XLSX.utils.decode_range(productsSheet["!ref"] || "A1:A1");
-          rangeLabel = "Sheet !ref: Products!" + (productsSheet["!ref"] || "A1:A1");
-          logDebug("No recognised named range found; using Products sheet !ref.");
-        }
-
-        // Read only the range for products (header row + data rows)
-        const sheetToUse = wb.Sheets[usedSheetName] || productsSheet;
-        const rows = XLSX.utils.sheet_to_json(sheetToUse, { header:1, range: rangeObj });
-
-        if (!rows.length) {
-          throw new Error("Products range appears empty (no rows).");
-        }
-
-        const headers = rows[0] || [];
-        const dataRows = rows.slice(1);
-
-        // Count rows with a non-empty Product name (assume column A in the named range)
-        const nonEmptyProducts = dataRows.filter(r => {
-          const v = r && r[0];
-          return v != null && String(v).trim() !== "";
-        });
-
-        const headerExcelRow = (rangeObj.s.r + 1); // 1-based
-        const firstDataExcelRow = headerExcelRow + 1;
-        const lastExcelRow = (rangeObj.e.r + 1);
-
-        updateProductsRangeInfo(
-          "Products range: " + rangeLabel +
-          " | header row: " + headerExcelRow +
-          " | data rows: " + firstDataExcelRow + "–" + lastExcelRow +
-          " | detected products: " + nonEmptyProducts.length
+        updateProductsDetectStatus(
+          "Products range: " + fixedRange +
+          " | header row: " + PRODUCTS_HEADER_ROW_1BASED +
+          " | detected products: " + records.length,
+          false
         );
-
-        logDebug(
-          "Products range info: " + rangeLabel +
-          " (header row " + headerExcelRow +
-          ", data rows " + firstDataExcelRow + "–" + lastExcelRow +
-          ", detected products " + nonEmptyProducts.length + ")"
-        );
-
-        // Build AI table: include rowIndex aligned to real Excel row numbers inside the chosen range.
-        const productTableForAI = dataRows
-          .map((row, idx) => {
-            const excelRow = (rangeObj.s.r + idx + 2); // 1-based row number of this data row
-            const obj = { rowIndex: excelRow };
-            headers.forEach((h, colIdx) => {
-              if (!h) return;
-              obj[String(h)] = row[colIdx];
-            });
-            return obj;
-          })
-          // Keep it sane: ignore blank "Product name" rows (column A in the range)
-          .filter(obj => {
-            const nameVal = dataRows[(obj.rowIndex - (rangeObj.s.r + 2))] && dataRows[(obj.rowIndex - (rangeObj.s.r + 2))][0];
-            return nameVal != null && String(nameVal).trim() !== "";
-          });
-
-        if (!productTableForAI.length) {
-          throw new Error("No usable products detected in the chosen range (column A appears blank).");
-        }
 
         const apiKey = getOpenAIKeyOrThrow();
+
+        const allowPricingLinks = !!(document.getElementById("allowAIPricingLinks") && document.getElementById("allowAIPricingLinks").checked);
+
         const systemPrompt =
-          "You are helping choose products from an AV company's master spreadsheet.\n" +
-          "You receive:\n" +
-          "- A structured consultation summary with productNeeds.\n" +
-          "- A list of products from the spreadsheet, with their columns exactly as given.\n\n" +
-          "Your job:\n" +
-          "- For each product need, choose the most appropriate product(s) from the list.\n" +
-          "- Decide which checklist the product should appear in: 'Audio', 'Visual', 'Control', 'Streaming', 'Infrastructure', or 'Other'.\n" +
-          "- Suggest a quantity (0 if you really cannot tell, but try to infer from the needs).\n" +
-          "- Add a short notes field with key details (e.g. 'Combi JTS RX – 1 HH + 1 belt-pack', 'White finish', 'Left wall mount', etc.).\n\n" +
-          "Rules:\n" +
-          "- Do NOT invent product names not present in the products table.\n" +
-          "- You may choose multiple products for a single need if sensible (e.g. projector + mount + wallplate).\n" +
-          "- If the products list includes a 'Category' column, you MAY use it as a hint, but it must NOT prevent choosing compatible items across categories.\n" +
-          "- If multiple products fit, choose the most likely / standard option.\n\n" +
+          "You are an AV-consultant style product selector for a spreadsheet-driven workflow.\n" +
+          "You MUST be strict and avoid inventing items that are not justified.\n\n" +
+          "Inputs:\n" +
+          "- structuredSummary: includes agreedSolution + productNeeds\n" +
+          "- products: rows from the Products sheet (real catalogue, with rowIndex).\n" +
+          "- guidedKit: a list of frequent products used by the company. Prefer these where appropriate.\n\n" +
+          "Output goal:\n" +
+          "Return a list of items to write into the workbook's Checklists sheet.\n\n" +
+          "Rules (Be Strict):\n" +
+          "1) Prefer products that exist in the Products list.\n" +
+          "2) Category is guidance only: do NOT block cross-category dependencies.\n" +
+          "3) Choose sensible quantities; if unknown, use 1 and explain uncertainty in reason.\n" +
+          "4) Only propose NEW products if nothing suitable exists in Products.\n" +
+          "5) If allowPricingLinks=false, then for NEW items set priceExVat=null and link=\"\".\n" +
+          "6) If allowPricingLinks=true, you may suggest price/link BUT MUST label in reason that it requires verification.\n\n" +
           "Return STRICT JSON ONLY in this format:\n" +
           "{\n" +
-          '  \"items\": [\n' +
+          "  \"items\": [\n" +
           "    {\n" +
-          '      \"rowIndex\": 0,\n' +
-          '      \"checklist\": \"Audio | Visual | Control | Streaming | Infrastructure | Other\",\n' +
-          '      \"quantity\": 0,\n' +
-          '      \"notes\": \"short engineer-facing note\",\n' +
-          '      \"reason\": \"why this product was chosen (brief)\",\n' +
-          '      \"productSnapshot\": { }\n' +
+          "      \"type\": \"existing\" | \"new\",\n" +
+          "      \"checklist\": \"Audio | Visual | Control | Streaming | Infrastructure | Other\",\n" +
+          "      \"productName\": \"exact product name (for existing, must match Products row value)\",\n" +
+          "      \"quantity\": 1,\n" +
+          "      \"notes\": \"short engineer note\",\n" +
+          "      \"reason\": \"why chosen\",\n" +
+          "      \"rowIndex\": 0,\n" +
+          "      \"priceExVat\": null,\n" +
+          "      \"link\": \"\"\n" +
           "    }\n" +
-          "  ]\n" +
-          "}\n" +
-          "No explanatory text outside the JSON.";
+          "  ],\n" +
+          "  \"warnings\": [\"...\"]\n" +
+          "}";
+
+        // Build a minimal searchable list for the model (avoid huge payloads)
+        // Keep only key fields + rowIndex. (Still enough for matching.)
+        const slimProducts = records.map(r => {
+          return {
+            rowIndex: r.rowIndex,
+            Product: r.Product || r.product || r.Name || r.name || r["Product"] || r["Name"] || r["PRODUCT"] || r[Object.keys(r)[1]],
+            Price: r.Price,
+            "Product Link": r["Product Link"],
+            Category: r.Category,
+            Notes: r.Notes,
+            "Product Description": r["Product Description"]
+          };
+        });
 
         const payload = {
+          allowPricingLinks,
           structuredSummary: lastStructuredSummary,
-          products: productTableForAI
+          products: slimProducts,
+          guidedKit: guided && guided.available ? guided.items : []
         };
+
+        logDebug("Step 3 payload: products=" + slimProducts.length + ", guidedKit=" + (payload.guidedKit.length || 0));
 
         const res = await fetch("https://api.openai.com/v1/responses", {
           method:"POST",
@@ -1191,13 +1309,14 @@
             "Authorization":"Bearer " + apiKey
           },
           body: JSON.stringify({
-            model: TEXT_MODEL,
+            model: DEBUG_MODEL, // use 5.1 for “consultant brain”
             input: [
               { role:"system", content: systemPrompt },
               { role:"user", content: JSON.stringify(payload) }
             ]
           })
         });
+
         if (!res.ok) {
           const txt = await res.text().catch(() => "");
           throw new Error("Product selection AI error " + res.status + ": " + txt);
@@ -1224,18 +1343,25 @@
           throw new Error("Could not parse JSON from product AI.");
         }
 
+        const items = Array.isArray(parsed.items) ? parsed.items : [];
+        const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+
+        // Write into Checklists (not AutoSelected)
+        const writePlan = writeIntoChecklists(wb, items);
+
         lastProductSelection = {
           workbook: wb,
-          headers,
-          rows,
-          selection: parsed.items || []
+          selection: items,
+          warnings,
+          writePlan
         };
 
         renderProductSelectionTable(lastProductSelection);
-        setAiStatus("Product suggestions generated. Review before downloading workbook.", false);
+        setAiStatus("Wrote selections into Checklists. Download the populated workbook when ready.", false);
       } catch (e) {
         console.error(e);
         setAiStatus(e.message || "Error generating product suggestions.", true);
+        updateProductsDetectStatus(e.message || "Error reading workbook.", true);
       } finally {
         document.getElementById("generateProductsBtn").disabled = false;
       }
@@ -1247,26 +1373,42 @@
         wrap.textContent = "No products suggested.";
         return;
       }
+
       const rowsHtml = state.selection.map(item => {
-        const rowIdx = item.rowIndex;
-        const checklist = item.checklist || "";
+        const type = asText(item.type) || "existing";
+        const checklist = asText(item.checklist) || "";
         const qty = item.quantity != null ? String(item.quantity) : "";
-        const notes = item.notes || "";
-        const reason = item.reason || "";
-        const snapshot = item.productSnapshot || {};
-        const name = snapshot.Name || snapshot.name || snapshot.Product || "";
+        const name = asText(item.productName) || "";
+        const notes = asText(item.notes) || "";
+        const reason = asText(item.reason) || "";
         return "<tr>" +
+          "<td>" + escapeHtml(type) + "</td>" +
           "<td>" + escapeHtml(checklist) + "</td>" +
           "<td>" + escapeHtml(String(qty)) + "</td>" +
-          "<td>" + escapeHtml(name || "[from row " + rowIdx + "]") + "</td>" +
+          "<td>" + escapeHtml(name) + "</td>" +
           "<td>" + escapeHtml(notes) + "</td>" +
           "<td>" + escapeHtml(reason) + "</td>" +
         "</tr>";
       }).join("");
 
+      const planHtml = (state.writePlan && state.writePlan.length)
+        ? state.writePlan.map(p => {
+            return "<li>" + escapeHtml(p.writeTo) + " → row " + escapeHtml(String(p.row)) +
+              " : " + escapeHtml(p.productName) +
+              (p.qty != null ? (" (Qty " + escapeHtml(String(p.qty)) + ")") : "") +
+              "</li>";
+          }).join("")
+        : "";
+
+      const warnHtml = (state.warnings && state.warnings.length)
+        ? "<div class='small-note danger' style='margin-top:6px;'><strong>Warnings:</strong><br>" +
+          state.warnings.map(w => escapeHtml(w)).join("<br>") + "</div>"
+        : "";
+
       wrap.innerHTML =
         "<table>" +
           "<thead><tr>" +
+            "<th>Type</th>" +
             "<th>Checklist</th>" +
             "<th>Qty</th>" +
             "<th>Product</th>" +
@@ -1274,18 +1416,14 @@
             "<th>Why chosen</th>" +
           "</tr></thead>" +
           "<tbody>" + rowsHtml + "</tbody>" +
-        "</table>";
+        "</table>" +
+        (planHtml ? ("<div class='small-note' style='margin-top:8px;'><strong>Write plan:</strong><ul>" + planHtml + "</ul></div>") : "") +
+        warnHtml;
     }
 
     function handleDownloadFilledTemplate() {
-      if (!lastProductSelection) {
-        alert("Generate product suggestions first.");
-        return;
-      }
-      const { workbook, selection } = lastProductSelection;
-      const data = selection || [];
-      if (!data.length) {
-        alert("No suggested products to write.");
+      if (!lastProductSelection || !lastProductSelection.workbook) {
+        alert("Generate & write into Checklists first.");
         return;
       }
       if (typeof XLSX === "undefined") {
@@ -1293,29 +1431,11 @@
         return;
       }
 
-      const header = ["Checklist","Qty","RowIndex","Notes","Reason","ProductSnapshot"];
-      const rows = [header];
-      data.forEach(item => {
-        rows.push([
-          item.checklist || "",
-          item.quantity != null ? item.quantity : "",
-          item.rowIndex != null ? item.rowIndex : "",
-          item.notes || "",
-          item.reason || "",
-          JSON.stringify(item.productSnapshot || {})
-        ]);
-      });
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      workbook.Sheets["AutoSelected"] = ws;
-      if (!workbook.SheetNames.includes("AutoSelected")) {
-        workbook.SheetNames.push("AutoSelected");
-      }
-
-      const wbout = XLSX.write(workbook, { bookType:"xlsx", type:"array" });
+      const wbout = XLSX.write(lastProductSelection.workbook, { bookType:"xlsx", type:"array" });
       const blob = new Blob([wbout], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "template_with_autoselected.xlsx";
+      a.download = "template_populated_checklists.xlsx";
       document.body.appendChild(a);
       a.click();
       setTimeout(() => {
@@ -1346,7 +1466,7 @@
         const arrayBuffer = await file.arrayBuffer();
         const wb = XLSX.read(arrayBuffer, { type:"array" });
 
-        let sheetName = "Clean";
+        let sheetName = CHECKLISTS_SHEET_NAME;
         if (!wb.Sheets[sheetName]) {
           sheetName = wb.SheetNames[0];
         }
@@ -1359,7 +1479,7 @@
           "You are generating a client-facing AV proposal/quote based on a priced spreadsheet and a consultation summary.\n\n" +
           "You will receive:\n" +
           "- A structured consultation summary (issues, current equipment, agreed solution).\n" +
-          "- A table from the 'Clean' (or equivalent) sheet of a spreadsheet that includes products, prices, quantities, totals, and possibly labour/time.\n\n" +
+          "- A table from the 'Checklists' (or equivalent) sheet of a spreadsheet that includes products, prices, quantities, totals, and possibly labour/time.\n\n" +
           "Your job:\n" +
           "1) Identify the main components that should be described in the proposal (projectors, screens/TVs, main speakers, amps, microphones, key control hardware, streaming hardware etc.).\n" +
           "   Do NOT write paragraphs about minor items (mounts, brackets, small accessories).\n" +
@@ -1371,7 +1491,7 @@
           "5) Write this as a proposal/quote that could be sent to the client, in clear UK English.\n\n" +
           "Rules:\n" +
           "- Do NOT invent extra products or prices. Work only from the spreadsheet table.\n" +
-          "- You may infer reasonable grouping from column headers (e.g. 'Category', 'Checklist', etc.).\n" +
+          "- You may infer reasonable grouping from headings and repeated 'CHECKLIST' sections.\n" +
           "- Do NOT expose raw spreadsheet table in the body, but you can refer to product names.\n\n" +
           "Structure the output as:\n" +
           "1) Short opening paragraph referencing the client's situation.\n" +
@@ -1519,7 +1639,6 @@
       setAiStatus("Running AI Debugger…", false);
       logDebug("AI Debugger invoked.");
 
-      // Caps to reduce "fails when user types" (payload bloat)
       const MAX_DEBUGLOG_CHARS = 40000;
       const MAX_STRUCTURED_CHARS = 25000;
       const MAX_USER_CHARS = 8000;
@@ -1630,7 +1749,9 @@
         setAiStatus("AI Debugger finished. Review its output below.", false);
       } catch (e) {
         console.error(e);
-        if (outEl) outEl.textContent = e.message || "AI Debugger error.";
+        if (outEl) {
+          outEl.textContent = e.message || "AI Debugger error.";
+        }
         setAiStatus(e.message || "AI Debugger error.", true);
       } finally {
         if (btn) btn.disabled = false;
@@ -1754,7 +1875,9 @@
       });
 
       const runAiDebuggerBtn = document.getElementById("runAiDebuggerBtn");
-      if (runAiDebuggerBtn) runAiDebuggerBtn.addEventListener("click", handleRunAiDebugger);
+      if (runAiDebuggerBtn) {
+        runAiDebuggerBtn.addEventListener("click", handleRunAiDebugger);
+      }
 
       // Date range advanced panel handlers
       const applyDateBtn = document.getElementById("applyDateRangeBtn");
@@ -1798,8 +1921,8 @@
       document.getElementById("clearApiKeyBtn").addEventListener("click", handleClearApiKey);
       refreshApiKeyStatus();
 
-      updateProductsRangeInfo("Products range: (upload template and click Generate to detect named range)");
       setStatus("Waiting for sign-in…", false);
+      updateProductsDetectStatus("Products range: (not loaded yet) — upload your workbook in Step 3.", false);
 
       // Prepare Google auth client
       setTimeout(() => {
