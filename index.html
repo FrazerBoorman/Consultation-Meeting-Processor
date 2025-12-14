@@ -269,7 +269,7 @@
         <div>
           <h1>
             Consultation Meeting Processor
-            <span class="version">v0.8</span>
+            <span class="version">v0.9</span>
           </h1>
           <div class="muted">
             Pick a consultation event, upload the audio or a text transcript, get a transcript, structured summary,
@@ -462,16 +462,16 @@
     <details class="debug">
       <summary>AI Debugger (Be Strict)</summary>
       <div class="small-note" style="margin-top:4px;">
-        Sends the full current index.html, internal debug log, structured AI JSON, and captured browser errors to the 5.1 model.
-        It will either propose a minimal code fix with a full replacement index, or explain why the issue is external.
+        Sends the full current index.html, internal debug log, structured AI JSON, captured browser errors, and captured console output to the 5.1 model.
+        Use the box below to describe what you think isn’t working (and optionally paste extra console output).
       </div>
       <div style="margin-top:6px;">
-        <button type="button" id="runAiDebuggerBtn">Run AI Debugger (index + debug log)</button>
+        <button type="button" id="runAiDebuggerBtn">Run AI Debugger (index + logs)</button>
       </div>
       <div class="small-note" style="margin-top:6px;">
-        Optional: paste any extra console messages here if you’ve copied them from DevTools:
+        Problem description (what you expected vs what happened) + optional pasted console:
       </div>
-      <textarea id="consoleErrorsInput" rows="4" style="margin-top:4px;"></textarea>
+      <textarea id="consoleErrorsInput" rows="5" style="margin-top:4px;" placeholder="Example: 'Advanced date range shows no events, but I can see events next week in Google Calendar…'"></textarea>
       <div class="small-note" style="margin-top:6px;">
         AI Debugger output (summary, reasons, and outline of changes):
       </div>
@@ -524,7 +524,25 @@
     let lastProductSelection = null;
     let lastProposalText = "";
     let browserErrorLog = [];
+    let consoleLogCapture = [];
     let customDateRange = { start: null, end: null }; // optional override for event date window
+
+    // ===================
+    // SMALL UTIL HELPERS
+    // ===================
+    function truncateTail(str, maxChars) {
+      const s = String(str || "");
+      if (!maxChars || maxChars <= 0) return "";
+      if (s.length <= maxChars) return s;
+      return "…(truncated; showing last " + maxChars + " chars)\n" + s.slice(-maxChars);
+    }
+
+    function capArray(arr, maxItems) {
+      if (!Array.isArray(arr)) return [];
+      if (!maxItems || maxItems <= 0) return [];
+      if (arr.length <= maxItems) return arr.slice();
+      return arr.slice(arr.length - maxItems);
+    }
 
     // ==============
     // DEBUG LOGGER
@@ -626,7 +644,9 @@
       let start;
       let end;
 
-      if (customDateRange.start && customDateRange.end) {
+      const usingCustomRange = !!(customDateRange.start && customDateRange.end);
+
+      if (usingCustomRange) {
         start = new Date(customDateRange.start);
         start.setHours(0,0,0,0);
         end = new Date(customDateRange.end);
@@ -665,10 +685,19 @@
       const items = data.items || [];
       const nowRef = new Date();
 
-      const processed = items
+      let processed = items
         .map(ev => ({ ev, startDate: getEventStartDate(ev) }))
-        .filter(obj => obj.startDate && obj.startDate <= nowRef)
-        .sort((a,b) => b.startDate - a.startDate);
+        .filter(obj => obj.startDate);
+
+      // IMPORTANT:
+      // - Default mode is "past + today": keep filtering out future events
+      // - Custom date range must allow future events (do NOT apply <= now filter)
+      if (!usingCustomRange) {
+        processed = processed.filter(obj => obj.startDate <= nowRef);
+        processed.sort((a,b) => b.startDate - a.startDate);
+      } else {
+        processed.sort((a,b) => a.startDate - b.startDate);
+      }
 
       currentEvents = processed.map(x => x.ev);
 
@@ -1329,7 +1358,8 @@
       "- debugLog (internal debug text)\\n" +
       "- structuredJsonDebug (JSON from earlier AI calls, if any)\\n" +
       "- browserErrors (window.onerror / unhandledrejection text)\\n" +
-      "- consoleExtra (freeform text pasted by the user)\\n\\n" +
+      "- consoleCaptured (captured console.log/warn/error lines)\\n" +
+      "- consoleExtra (freeform text written by the user: problem description and/or pasted console)\\n\\n" +
       "You must respond with STRICT JSON in this shape:\\n" +
       "{\\n" +
       '  \"outcome\": \"code_fix\" | \"external_issue\" | \"no_issue\",\\n' +
@@ -1364,14 +1394,27 @@
       setAiStatus("Running AI Debugger…", false);
       logDebug("AI Debugger invoked.");
 
+      // Caps to reduce "fails when user types" (payload bloat)
+      const MAX_DEBUGLOG_CHARS = 40000;
+      const MAX_STRUCTURED_CHARS = 25000;
+      const MAX_USER_CHARS = 8000;
+      const MAX_BROWSER_ERRORS = 50;
+      const MAX_CONSOLE_CAPTURE = 200;
+      const MAX_CONSOLE_LINE_CHARS = 600;
+
+      const userText = (document.getElementById("consoleErrorsInput") && document.getElementById("consoleErrorsInput").value) || "";
+      const cappedConsoleCaptured = capArray(consoleLogCapture, MAX_CONSOLE_CAPTURE).map(line => truncateTail(line, MAX_CONSOLE_LINE_CHARS));
+      const cappedBrowserErrors = capArray(browserErrorLog, MAX_BROWSER_ERRORS).map(line => truncateTail(line, MAX_CONSOLE_LINE_CHARS));
+
       const payload = {
         toolName: "Consultation Meeting Processor",
         versionPill: (document.querySelector(".version") && document.querySelector(".version").textContent) || "",
         indexHtml: document.documentElement.outerHTML,
-        debugLog: (document.getElementById("debugLog") && document.getElementById("debugLog").textContent) || "",
-        structuredJsonDebug: (document.getElementById("debugJson") && document.getElementById("debugJson").textContent) || "",
-        browserErrors: browserErrorLog.slice(),
-        consoleExtra: (document.getElementById("consoleErrorsInput") && document.getElementById("consoleErrorsInput").value) || ""
+        debugLog: truncateTail((document.getElementById("debugLog") && document.getElementById("debugLog").textContent) || "", MAX_DEBUGLOG_CHARS),
+        structuredJsonDebug: truncateTail((document.getElementById("debugJson") && document.getElementById("debugJson").textContent) || "", MAX_STRUCTURED_CHARS),
+        browserErrors: cappedBrowserErrors,
+        consoleCaptured: cappedConsoleCaptured,
+        consoleExtra: truncateTail(userText, MAX_USER_CHARS)
       };
 
       const outEl = document.getElementById("aiDebuggerOutput");
@@ -1508,6 +1551,52 @@
     // =========
     window.addEventListener("DOMContentLoaded", () => {
       logDebug("DOM loaded.");
+
+      // Capture console output (log/warn/error) into consoleLogCapture for AI Debugger
+      (function hookConsole() {
+        try {
+          const origLog = console.log ? console.log.bind(console) : null;
+          const origWarn = console.warn ? console.warn.bind(console) : null;
+          const origErr = console.error ? console.error.bind(console) : null;
+
+          function fmtArgs(args) {
+            try {
+              return Array.from(args).map(a => {
+                if (typeof a === "string") return a;
+                try { return JSON.stringify(a); } catch (e) { return String(a); }
+              }).join(" ");
+            } catch (e) {
+              return "(unformattable console args)";
+            }
+          }
+
+          if (origLog) {
+            console.log = function() {
+              const ts = new Date().toISOString().replace("T"," ").slice(0,19);
+              consoleLogCapture.push("[" + ts + "] LOG: " + fmtArgs(arguments));
+              return origLog.apply(null, arguments);
+            };
+          }
+          if (origWarn) {
+            console.warn = function() {
+              const ts = new Date().toISOString().replace("T"," ").slice(0,19);
+              consoleLogCapture.push("[" + ts + "] WARN: " + fmtArgs(arguments));
+              return origWarn.apply(null, arguments);
+            };
+          }
+          if (origErr) {
+            console.error = function() {
+              const ts = new Date().toISOString().replace("T"," ").slice(0,19);
+              consoleLogCapture.push("[" + ts + "] ERROR: " + fmtArgs(arguments));
+              return origErr.apply(null, arguments);
+            };
+          }
+
+          logDebug("Console capture enabled (log/warn/error).");
+        } catch (e) {
+          logDebug("Console capture hook failed: " + (e && e.message ? e.message : String(e)));
+        }
+      })();
 
       // Capture browser-level errors into browserErrorLog and debug pane
       window.addEventListener("error", (event) => {
